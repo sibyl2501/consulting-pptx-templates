@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
 """閲覧用のスライドを JSON から生成する。Python 3.10 以降・標準ライブラリのみ。"""
+
+# ========================================
+# ライブラリの読み込み
+# ========================================
 import argparse
 import json
 import math
@@ -9,9 +13,12 @@ import re
 # このファイルは入力を検査し、layouts.py にページ別の描画を依頼する。
 # pptx_document.py は図形や表をまとめて PPTX に書き出す。
 from layouts import ACCENT, NAVY, RENDERERS, footer, standard_slide, table_pages
-from pptx_document import DEFAULT_PAGE_SIZE, PAGE_SIZES, Slide, write_pptx
+from pptx_document import DEFAULT_FONT, DEFAULT_PAGE_SIZE, FONT_FAMILIES, PAGE_SIZES, Slide, write_pptx
 
 
+# ========================================
+# 入力仕様の場所と使用できない文字の指定
+# ========================================
 # 起動した場所に関係なく、このスクリプトの隣に置かれた入力仕様を使う。
 SCHEMA_PATH = Path(__file__).with_name("slide.schema.json")
 # PPTX 内の XML に書けない制御文字や単独のサロゲートを検出する。
@@ -19,10 +26,16 @@ SCHEMA_PATH = Path(__file__).with_name("slide.schema.json")
 XML_CONTROL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\ud800-\udfff\ufffe\uffff]")
 
 
+# ========================================
+# 入力エラーの定義
+# ========================================
 class InputError(ValueError):
     """資料の入力箇所が分かるエラー。"""
 
 
+# ========================================
+# 入力仕様の読み込みとレイアウト一覧
+# ========================================
 # JSON の入力仕様を、検査に使う Python の辞書として読み込む。
 def read_schema():
     return json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
@@ -37,6 +50,9 @@ def catalog(schema):
     return {entry["properties"]["layout"]["const"]: entry for entry in formats}
 
 
+# ========================================
+# 入力データの型と値の検査
+# ========================================
 # Python では isinstance(True, int) が真になる。JSON の整数と真偽値を区別するため型を直接比較する。
 # number では大きすぎる整数や、無限大などの有限でない小数も除く。
 def matches_type(value, kind):
@@ -98,6 +114,9 @@ def validate(value, rule, at, definitions):
             validate(item, props[key], f"{at}.{key}", definitions)
 
 
+# ========================================
+# 資料全体と各ページの検査
+# ========================================
 def validate_document(document, schema):
     kinds = catalog(schema)
     # レイアウトを追加するときは、JSON の入力仕様と Python の描画関数の両方に同じ型を登録する。
@@ -120,7 +139,10 @@ def validate_document(document, schema):
         validate(page, kinds[name], f"{at}（{name}）", schema["$defs"])
 
 
-def render(document, asset_root, schema=None, *, page_size=DEFAULT_PAGE_SIZE):
+# ========================================
+# スライドの生成
+# ========================================
+def render(document, asset_root, schema=None, *, page_size=DEFAULT_PAGE_SIZE, font=DEFAULT_FONT):
     """書き出しと入力検査で同じ配置を実行する。"""
     # 通常は同梱の入力仕様を読み込む。呼び出し元から仕様を渡すこともできる。
     schema = read_schema() if schema is None else schema
@@ -136,11 +158,11 @@ def render(document, asset_root, schema=None, *, page_size=DEFAULT_PAGE_SIZE):
                 number = len(slides) + 1
                 # 表紙と章扉は独自の構成。章扉にフッターを付け、本文には共通見出しとフッターを付ける。
                 if kind in ("cover", "section"):
-                    slide = Slide(f"{number:02d} {part['title']}", page_size)
+                    slide = Slide(f"{number:02d} {part['title']}", page_size, font=font)
                     if kind == "section":
                         footer(slide, part, number)
                 else:
-                    slide = standard_slide(part, document, number, page_size)
+                    slide = standard_slide(part, document, number, page_size, font=font)
                 # 型名に対応する関数を呼び、作成済みの Slide に本文を加える。
                 # asset_root は画像を使う型で、相対パスの起点になる。
                 RENDERERS[kind](slide, part, asset_root)
@@ -151,6 +173,9 @@ def render(document, asset_root, schema=None, *, page_size=DEFAULT_PAGE_SIZE):
     return slides
 
 
+# ========================================
+# コマンドの受付と実行
+# ========================================
 def main(argv=None):
     # argv を省略するとターミナルの引数を読む。呼び出し元が引数の一覧を明示してもよい。
     parser = argparse.ArgumentParser(description=__doc__)
@@ -159,6 +184,8 @@ def main(argv=None):
     # 用紙指定は資料全体に適用する。既定は印刷しやすい A4 横。
     parser.add_argument("--page-size", choices=PAGE_SIZES, default=DEFAULT_PAGE_SIZE,
                         help="スライドの大きさ（既定: A4 横）")
+    parser.add_argument("--font", choices=FONT_FAMILIES, default=DEFAULT_FONT,
+                        help="書体（既定: ヒラギノ角ゴシック、代替: yu-gothic）")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="入力と配置を検査する")
     mode.add_argument("--catalog", action="store_true", help="レイアウトの名称と用途を表示する")
@@ -180,7 +207,7 @@ def main(argv=None):
         # utf-8-sig は BOM（ファイル先頭の目印）付き・なしの両方に対応する。
         # 画像の相対パスは実行場所にかかわらず、入力 JSON の親ディレクトリを基準にする。
         document = json.loads(args.input.read_text(encoding="utf-8-sig"))
-        slides = render(document, args.input.resolve().parent, page_size=args.page_size)
+        slides = render(document, args.input.resolve().parent, page_size=args.page_size, font=args.font)
         # 検査モードでも配置を実行する。文字や表の収まりを確かめ、ファイルへの書き出しを省く。
         if args.check:
             print(f"検査完了。入力 {len(document['slides'])} 件、出力予定 {len(slides)} 枚")
@@ -193,6 +220,9 @@ def main(argv=None):
     return 0
 
 
+# ========================================
+# プログラムの起動
+# ========================================
 # このファイルを直接実行した場合に CLI を起動する。他のファイルから import しても起動しない。
 if __name__ == "__main__":
     raise SystemExit(main())

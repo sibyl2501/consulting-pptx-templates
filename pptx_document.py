@@ -1,6 +1,10 @@
 # スライドの図形・表・テーマを Office Open XML（OOXML）で記述し、ZIP 形式の PPTX にまとめる。
 # レイアウトが渡す座標・寸法・文字サイズは基準キャンバスでの値。書き出し時に用紙に合わせて換算する。
 """Write editable PowerPoint shapes, tables and an Office theme using only Python."""
+
+# ========================================
+# ライブラリの読み込み
+# ========================================
 from itertools import count
 from math import ceil, isfinite
 from os import replace
@@ -10,6 +14,9 @@ from xml.sax.saxutils import escape, quoteattr
 from zipfile import ZIP_DEFLATED, ZipFile
 import unicodedata
 
+# ========================================
+# キャンバスと用紙サイズの指定
+# ========================================
 # layouts.py が使う基準キャンバス。座標の原点は左上で、x は右、y は下に増える。
 WIDTH, HEIGHT = 960, 540
 # 出力サイズはポイント（1 インチ = 72 pt）。A4 横は 297 × 210 mm。
@@ -18,8 +25,20 @@ PAGE_SIZES = {
     "a4": (297 * 72 / 25.4, 210 * 72 / 25.4, "A4"),
     "16:9": (WIDTH, HEIGHT, "screen16x9"),
 }
+
+# ========================================
+# フォントの指定
+# ========================================
 # テキストの直接指定と、テーマの既定フォントで共通に使うフォント名。
-FONT = "Yu Gothic"
+DEFAULT_FONT = "hiragino"
+FONT_FAMILIES = {
+    "hiragino": "Hiragino Sans",
+    "yu-gothic": "Yu Gothic",
+}
+
+# ========================================
+# XMLの名前空間と共通設定
+# ========================================
 # DrawingML の図形・文字・表要素に使う a: 名前空間。
 A = "http://schemas.openxmlformats.org/drawingml/2006/main"
 # graphicData に渡す表の種類識別子。ここで PowerPoint が中身を表と判定する。
@@ -43,6 +62,9 @@ COLOR_MAP = ('accent1="accent1" accent2="accent2" accent3="accent3" accent4="acc
 INHERIT = '<p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr>'
 
 
+# ========================================
+# 座標・色・線の変換
+# ========================================
 # ポイントを OOXML の長さ単位 EMU（English Metric Unit）に変換する。1 pt は 12,700 EMU。
 def emu(points):
     return round(points * 12700)
@@ -67,15 +89,19 @@ def outline(color=None, width=0.75, arrow=False):
     return f'<a:ln w="{emu(width)}">{fill(color)}{tail}</a:ln>'
 
 
-# 欧文、東アジア文字、複合文字用の各スロットに同じ FONT を指定する。
-def fonts():
-    return f'<a:latin typeface="{FONT}"/><a:ea typeface="{FONT}"/><a:cs typeface="{FONT}"/>'
+# ========================================
+# 文字の書式・幅・高さとXMLの生成
+# ========================================
+# 欧文、東アジア文字、複合文字用の各スロットに同じ書体名を指定する。
+def fonts(font):
+    face = FONT_FAMILIES[font]
+    return f'<a:latin typeface="{face}"/><a:ea typeface="{face}"/><a:cs typeface="{face}"/>'
 
 
 # 文字列の一部分（ラン）のサイズ、色、太字、フォントを指定する。OOXML のサイズは 1/100 pt 単位。
-def font_properties(size, color, bold=False):
+def font_properties(size, color, bold, font):
     return (f'<a:rPr lang="ja-JP" sz="{round(size * 100)}" b="{int(bold)}">'
-            f'{fill(color)}{fonts()}</a:rPr>')
+            f'{fill(color)}{fonts(font)}</a:rPr>')
 
 
 def display_width(value):
@@ -103,14 +129,14 @@ def cell_text(value):
 
 # 1 行を 1 段落にする。align は l（左）・ctr（中央）・r（右）で、行間は指定値の 116%。
 # escape() で本文中の & や < を XML 用に処理し、xml:space で空白を保持する。
-def paragraph(value, size, color, bold, align):
+def paragraph(value, size, color, bold, align, font):
     return (f'<a:p><a:pPr algn="{align}"><a:lnSpc><a:spcPct val="116000"/>'
-            f'</a:lnSpc></a:pPr><a:r>{font_properties(size, color, bold)}'
+            f'</a:lnSpc></a:pPr><a:r>{font_properties(size, color, bold, font)}'
             f'<a:t xml:space="preserve">{escape(value)}</a:t></a:r>'
             f'<a:endParaRPr lang="ja-JP" sz="{round(size * 100)}"/></a:p>')
 
 
-def text_body(tag, value, w, h, size, color, bold, align, anchor, minimum=None, *, scale=1):
+def text_body(tag, value, w, h, size, color, bold, align, anchor, minimum=None, *, scale=1, font=DEFAULT_FONT):
     """文字サイズを指定下限まで調整し、収まらないときは場所を知らせる。"""
     value = str(value)
     anchor = {"middle": "ctr", "top": "t"}.get(anchor, anchor)
@@ -125,16 +151,20 @@ def text_body(tag, value, w, h, size, color, bold, align, anchor, minimum=None, 
     body = (f'<a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" anchor="{anchor}">'
             '<a:noAutofit/></a:bodyPr>')
     return (f'<{tag}>{body}<a:lstStyle/>' +
-            ''.join(paragraph(line, size * scale, color, bold, align) for line in value.split("\n")) +
+            ''.join(paragraph(line, size * scale, color, bold, align, font) for line in value.split("\n")) +
             f'</{tag}>')
 
 
+# ========================================
+# スライドの組み立て
+# ========================================
 # 1 枚のスライドを組み立てる。図形や表の XML を追加順に保持し、後から追加した要素が手前に描画される。
 class Slide:
     # スライド名、要素の格納先、スライド内で一意な図形 ID の採番を初期化する。
-    def __init__(self, name, page_size=DEFAULT_PAGE_SIZE):
+    def __init__(self, name, page_size=DEFAULT_PAGE_SIZE, *, font=DEFAULT_FONT):
         self.name = name
         self.page_size = page_size
+        self.font = font
         paper_width, paper_height, _ = PAGE_SIZES[page_size]
         self.x_scale = paper_width / WIDTH
         self.y_scale = paper_height / HEIGHT
@@ -196,7 +226,7 @@ class Slide:
         try:
             # 横幅と文字を同じ倍率で換算し、基準キャンバスで見積もった改行を保ちやすくする。
             content = text_body("p:txBody", value, w, h, size, color, bold, align, anchor, minimum,
-                                scale=self.x_scale)
+                                scale=self.x_scale, font=self.font)
         except ValueError as error:
             raise ValueError(f"{label} — {error}") from error
         self._shape(label, x, y, w, h, "rect", None, outline(), content)
@@ -241,7 +271,7 @@ class Slide:
                 align = aligns[col_index] if aligns and row_index else "l"
                 content = text_body("a:txBody", cell_text(value), width - 16, height - 8, size,
                                     color, row_index == 0 or col_index == 0, align, "middle",
-                                    scale=self.x_scale)
+                                    scale=self.x_scale, font=self.font)
                 cells.append(f'<a:tc>{content}<a:tcPr marL="{emu(8 * self.x_scale)}" '
                              f'marR="{emu(8 * self.x_scale)}" marT="{emu(4 * self.y_scale)}" '
                              f'marB="{emu(4 * self.y_scale)}" anchor="ctr">'
@@ -265,6 +295,9 @@ class Slide:
                 f'{"".join(self.parts)}</p:spTree></p:cSld>{INHERIT}</p:sld>')
 
 
+# ========================================
+# XML部品間の参照関係
+# ========================================
 # (関係の種類, 相対パス) の組から .rels を作る。引数の順に rId1 から割り当てる。
 def relationships(*items):
     links = ''.join(
@@ -274,8 +307,11 @@ def relationships(*items):
     return f'<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">{links}</Relationships>'
 
 
+# ========================================
+# テーマの色とフォント
+# ========================================
 # Office のテーマ XML を作る。テーマ色は PowerPoint 上で追加する図形などの色選択にも使われる。
-def theme(navy, accent):
+def theme(navy, accent, font=DEFAULT_FONT):
     # dk / lt は基本の暗色・明色、accent は強調色、hlink / folHlink は未訪問・訪問済みリンクの色。
     palette = {
         "dk1": "182D41", "lt1": "FFFFFF", "dk2": navy, "lt2": "F1F5F8",
@@ -284,9 +320,9 @@ def theme(navy, accent):
         "hlink": "14629B", "folHlink": "694E83",
     }
     colors = ''.join(f'<a:{k}><a:srgbClr val="{v}"/></a:{k}>' for k, v in palette.items())
-    # 見出し用（major）と本文用（minor）の両方で FONT を使い、日本語（Jpan）も明示する。
+    # 見出し用（major）と本文用（minor）の両方に選んだ書体を入れ、日本語（Jpan）も明示する。
     font_scheme = ''.join(
-        f'<a:{slot}Font>{fonts()}<a:font script="Jpan" typeface="{FONT}"/></a:{slot}Font>'
+        f'<a:{slot}Font>{fonts(font)}<a:font script="Jpan" typeface="{FONT_FAMILIES[font]}"/></a:{slot}Font>'
         for slot in ("major", "minor")
     )
     # テーマの塗り・線に使用する色の参照と、線の既定の太さ 3 段階（EMU）を用意する。
@@ -302,6 +338,9 @@ def theme(navy, accent):
             '</a:fmtScheme></a:themeElements></a:theme>')
 
 
+# ========================================
+# PowerPointファイルの書き出し
+# ========================================
 # Slide の一覧とテーマ色を受け取り、編集可能な .pptx を指定パスへ保存する。
 def write_pptx(path, slides, navy, accent):
     # PPTX 内のページ寸法は資料全体に共通。異なるサイズのスライドを混在させない。
@@ -309,6 +348,9 @@ def write_pptx(path, slides, navy, accent):
     if any(slide.page_size != page_size for slide in slides):
         raise ValueError("資料内のスライドサイズをそろえてください")
     paper_width, paper_height, size_type = PAGE_SIZES[page_size]
+    font = slides[0].font if slides else DEFAULT_FONT
+    if any(slide.font != font for slide in slides):
+        raise ValueError("資料内の書体の設定をそろえてください")
     presentation = "presentationml."
     parts = {
         # パッケージを開いたときの入口。ここからプレゼンテーション本体にたどる。
@@ -328,7 +370,7 @@ def write_pptx(path, slides, navy, accent):
             ("slideMaster", "slideMasters/slideMaster1.xml"),
             *(("slide", f"slides/slide{i}.xml") for i in range(1, len(slides)+1)),
         ),
-        "ppt/theme/theme1.xml": theme(navy, accent),
+        "ppt/theme/theme1.xml": theme(navy, accent, font),
         # 全スライドが使う白地のマスター。配色の対応付けと白紙レイアウトへの参照を持つ。
         "ppt/slideMasters/slideMaster1.xml": (
             f'<p:sldMaster {NS}><p:cSld name="共通マスター"><p:bg><p:bgPr>{fill("FFFFFF")}'
