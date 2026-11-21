@@ -41,6 +41,9 @@ FONT_FAMILIES = {
 # ========================================
 # DrawingML の図形・文字・表要素に使う a: 名前空間。
 A = "http://schemas.openxmlformats.org/drawingml/2006/main"
+A14 = "http://schemas.microsoft.com/office/drawing/2010/main"
+M = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+MC = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 # graphicData に渡す表の種類識別子。ここで PowerPoint が中身を表と判定する。
 TABLE = "http://schemas.openxmlformats.org/drawingml/2006/table"
 # PresentationML のスライド・図形コンテナなどに使う p: 名前空間。
@@ -136,10 +139,8 @@ def paragraph(value, size, color, bold, align, font):
             f'<a:endParaRPr lang="ja-JP" sz="{round(size * 100)}"/></a:p>')
 
 
-def text_body(tag, value, w, h, size, color, bold, align, anchor, minimum=None, *, scale=1, font=DEFAULT_FONT):
-    """文字サイズを指定下限まで調整し、収まらないときは場所を知らせる。"""
-    value = str(value)
-    anchor = {"middle": "ctr", "top": "t"}.get(anchor, anchor)
+def fitted_text_size(value, w, h, size, bold, minimum=None):
+    """文字サイズを指定下限まで調整し、領域に収まるサイズを返す。"""
     minimum = size if minimum is None else minimum
     if w <= 0 or h <= 0 or minimum > size:
         raise ValueError("文字領域または最小文字サイズの指定が不正です")
@@ -148,6 +149,13 @@ def text_body(tag, value, w, h, size, color, bold, align, anchor, minimum=None, 
             snippet = value.replace("\n", " ")[:44]
             raise ValueError(f"文字が収まりません（下限 {minimum:g} pt）『{snippet}』")
         size = max(minimum, size - 0.5)
+    return size
+
+
+def text_body(tag, value, w, h, size, color, bold, align, anchor, minimum=None, *, scale=1, font=DEFAULT_FONT):
+    value = str(value)
+    anchor = {"middle": "ctr", "top": "t"}.get(anchor, anchor)
+    size = fitted_text_size(value, w, h, size, bold, minimum)
     body = (f'<a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" anchor="{anchor}">'
             '<a:noAutofit/></a:bodyPr>')
     return (f'<{tag}>{body}<a:lstStyle/>' +
@@ -171,6 +179,53 @@ class Slide:
         self.parts = []
         self.ids = count(2)
         self.pictures = []
+        self.warnings = []
+        self.readable_regions = []
+
+    # 背景や罫線と本文の重なりは意図した装飾なので、文字・数式・表などを対象にする。
+    def track_region(self, label, x, y, w, h):
+        for other, left, top, width, height in self.readable_regions:
+            horizontal = min(x + w, left + width) - max(x, left)
+            vertical = min(y + h, top + height) - max(y, top)
+            if horizontal > 3 and vertical > 3:
+                self.warnings.append(f"「{label}」と「{other}」が重なる可能性があります")
+        self.readable_regions.append((label, x, y, w, h))
+
+    def inspect_text(self, label, value, x, y, w, h, size, bold, align, anchor):
+        if not value.strip():
+            return
+        # 文字幅の概算を使う。日本語は文字境界、欧文は単語の途中を避けて折り返す。
+        capacity = w / size / (1.12 if bold else 1.07)
+        widths = []
+        for paragraph_text in value.split("\n"):
+            line, remainder = "", paragraph_text
+            wrapped = False
+            while remainder and display_width(remainder) > capacity:
+                index = 0
+                width = 0
+                for index, char in enumerate(remainder):
+                    width += display_width(char)
+                    if width > capacity:
+                        break
+                cutoff = max(1, index)
+                boundary = remainder.rfind(" ", 0, cutoff + 1)
+                if boundary > 0 and remainder[boundary + 1:cutoff].isascii():
+                    cutoff = boundary
+                line, remainder = remainder[:cutoff], remainder[cutoff:].lstrip()
+                widths.append(display_width(line.rstrip()))
+                wrapped = True
+            widths.append(display_width(remainder.rstrip()))
+            if wrapped and 0 < len(remainder.strip()) <= 2:
+                self.warnings.append(f"「{label}」は最終行が短くなる可能性があります")
+        used_w = min(w, max(widths) * size)
+        used_h = min(h, len(widths) * size * 1.16 * self.x_scale / self.y_scale)
+        if align == "ctr":
+            x += (w - used_w) / 2
+        elif align == "r":
+            x += w - used_w
+        if anchor in ("middle", "ctr"):
+            y += (h - used_h) / 2
+        self.track_region(label, x, y, used_w, used_h)
 
     def check_bounds(self, name, x, y, w, h):
         if (not all(isfinite(value) for value in (x, y, w, h))
@@ -222,14 +277,44 @@ class Slide:
     # 指定位置に編集可能なテキストボックスを作る。name を省くと本文の先頭を図形名に使う。
     def text(self, value, x, y, w, h, size, color, bold=False, align="l",
              anchor="top", name=None, minimum=None):
-        label = name or str(value).replace("\n", " ")[:50] or "本文"
+        value = str(value)
+        label = name or value.replace("\n", " ")[:50] or "本文"
         try:
             # 横幅と文字を同じ倍率で換算し、基準キャンバスで見積もった改行を保ちやすくする。
-            content = text_body("p:txBody", value, w, h, size, color, bold, align, anchor, minimum,
+            fitted = fitted_text_size(value, w, h, size, bold, minimum)
+            content = text_body("p:txBody", value, w, h, fitted, color, bold, align, anchor,
                                 scale=self.x_scale, font=self.font)
         except ValueError as error:
             raise ValueError(f"{label} — {error}") from error
         self._shape(label, x, y, w, h, "rect", None, outline(), content)
+        if fitted < size:
+            self.warnings.append(f"「{label}」の文字サイズを "
+                                 f"{size * self.x_scale:.1f} → {fitted * self.x_scale:.1f} pt に縮小しました")
+        self.inspect_text(label, value, x, y, w, h, fitted, bold, align, anchor)
+
+    def equation(self, formula, x, y, w, h, size, color, label):
+        """ネイティブ数式を使えない閲覧ソフト向けに、同じ位置に代替テキストを入れる。"""
+        fallback = text_body("p:txBody", formula.plain, w, h, min(12, size), color,
+                             False, "ctr", "middle", 8, scale=self.x_scale, font=self.font)
+        math_font = round(size * self.x_scale * 100)
+        style = (f'<a:rPr lang="en-US" sz="{math_font}">{fill(color)}'
+                 '<a:latin typeface="Cambria Math"/><a:ea typeface="Cambria Math"/></a:rPr>')
+        # m:rPr（数学用の書式）と m:t（文字）の間に DrawingML の書体を配置する。
+        native = formula.xml.replace("<m:t ", f"{style}<m:t ")
+        body = ('<p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr">'
+                '<a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="ctr"/>'
+                f'<a14:m xmlns:m="{M}"><m:oMathPara><m:oMathParaPr><m:jc m:val="center"/>'
+                f'</m:oMathParaPr><m:oMath>{native}</m:oMath></m:oMathPara></a14:m>'
+                f'<a:endParaRPr lang="en-US" sz="{math_font}"/></a:p></p:txBody>')
+        self._shape(label, x, y, w, h, "rect", None, outline(), fallback)
+        fallback_shape = self.parts.pop()
+        native_shape = fallback_shape.replace(fallback, body, 1)
+        self.parts.append(f'<mc:AlternateContent xmlns:mc="{MC}">'
+                          f'<mc:Choice xmlns:a14="{A14}" Requires="a14">{native_shape}</mc:Choice>'
+                          f'<mc:Fallback>{fallback_shape}</mc:Fallback></mc:AlternateContent>')
+        self.track_region(label, x, y, w, h)
+        if size < 19:
+            self.warnings.append(f"「{label}」の数式を {math_font / 100:.1f} pt に縮小しました")
 
     def picture(self, data, extension, x, y, w, h, alternative):
         """元画像を貼り、画像ボックスと注釈を個別に編集できるようにする。"""
@@ -249,6 +334,7 @@ class Slide:
     def table(self, x, y, widths, heights, rows, navy, accent_light, ink, highlight=None, size=12, aligns=()):
         """A real PowerPoint table. Each cell remains directly editable."""
         self.check_bounds("表", x, y, sum(widths), sum(heights))
+        self.track_region("表", x, y, sum(widths), sum(heights))
         tbl_rows = []
         # strict=True によって、行数や列数が指定した寸法と合わない入力を検出する。
         for row_index, (height, values) in enumerate(zip(heights, rows, strict=True)):

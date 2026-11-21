@@ -3,11 +3,13 @@
 # ========================================
 # ライブラリの読み込み
 # ========================================
+from collections import Counter
 from math import ceil, floor, log10
 from pathlib import Path
 from struct import unpack
 
-from pptx_document import DEFAULT_FONT, DEFAULT_PAGE_SIZE, HEIGHT, WIDTH, Slide, cell_text, text_height
+from equations import equation_size, parse_equation
+from pptx_document import DEFAULT_FONT, DEFAULT_PAGE_SIZE, HEIGHT, WIDTH, Slide, cell_text, fitted_text_size, text_height
 
 
 # ========================================
@@ -43,6 +45,7 @@ TITLE_HEIGHT = 62
 TITLE_SIZE = 27
 TITLE_MIN = 22
 TITLE_RULE_LIMIT = 102
+TITLE_RULE_GAP = 3
 BODY_GAP = 9
 
 # ========================================
@@ -126,12 +129,10 @@ def row_pairs(slide, items, x, y, w, bottom, label_w=156, balanced=False):
 # 共通見出しとフッター
 # ========================================
 def title_rule_y(title):
-    # 標準サイズで折り返す場合は、従来の位置に罫線を置いて見出しの高さを確保する。
-    height = text_height(title, CONTENT, TITLE_SIZE, True)
-    one_line_height = text_height("", CONTENT, TITLE_SIZE, True)
-    if height > one_line_height:
-        return TITLE_RULE_LIMIT
-    return min(TITLE_RULE_LIMIT, TITLE_Y + ceil(height) + 7)
+    # 実際に採用する文字サイズで高さを測り、2 行見出しでも罫線が文字にかからないようにする。
+    size = fitted_text_size(title, CONTENT, TITLE_HEIGHT, TITLE_SIZE, True, TITLE_MIN)
+    height = text_height(title, CONTENT, size, True)
+    return min(TITLE_RULE_LIMIT, TITLE_Y + ceil(height) + TITLE_RULE_GAP)
 
 
 def body_top(page):
@@ -262,7 +263,7 @@ def background(slide, page, _root):
 # 表の列幅・行高・改ページと描画
 # ========================================
 # widths は列幅の比。省略時は等幅で、合計が本文幅の CONTENT になるよう配分する。
-def table_widths(table):
+def table_widths(table, width=CONTENT):
     count = len(table["headers"])
     weights = table.get("widths", [1] * count)
     if len(weights) != count:
@@ -270,7 +271,7 @@ def table_widths(table):
     # 先に最大値で割り、大きな重み同士を直接加算して扱える範囲を超えるのを防ぐ。
     high = max(weights)
     normalized = [weight / high for weight in weights]
-    widths = [CONTENT * weight / sum(normalized) for weight in normalized]
+    widths = [width * weight / sum(normalized) for weight in normalized]
     if min(widths) < 48:
         raise ValueError("表の列幅が狭すぎます。widths の比率を調整してください")
     return widths
@@ -536,15 +537,7 @@ def image_size(data):
 # 画像を埋め込み、その上の番号と右側の説明を別要素として描く。
 def annotated_image(slide, page, root):
     top = body_top(page)
-    file = Path(page["image"])
-    source = root / file
-    try:
-        data = source.read_bytes()
-    except OSError as error:
-        raise ValueError(f"画像を読めません（{file}）") from error
-    ext, pixel_w, pixel_h = image_size(data)
-    if min(pixel_w, pixel_h) <= 0:
-        raise ValueError("画像の寸法が不正です")
+    data, ext, pixel_w, pixel_h = load_image(root, page["image"])
     # 表示枠の中に元画像の縦横比で収め、余った空間を左右または上下に均等に取る。
     image_bottom = 437
     frame = (LEFT + 2, top + 10, 548, image_bottom - top - 10)
@@ -567,6 +560,18 @@ def annotated_image(slide, page, root):
     items = [dict(heading=f"{i}　{note['heading']}", text=note["text"])
              for i, note in enumerate(notes, 1)]
     prose(slide, items, right_x, top + 49, RIGHT - right_x, BOTTOM)
+
+
+def load_image(root, image):
+    file = Path(image)
+    try:
+        data = (root / file).read_bytes()
+    except OSError as error:
+        raise ValueError(f"画像を読めません（{file}）") from error
+    ext, pixel_w, pixel_h = image_size(data)
+    if min(pixel_w, pixel_h) <= 0:
+        raise ValueError("画像の寸法が不正です")
+    return data, ext, pixel_w, pixel_h
 
 
 # 事例。左の profile は項目名と値の組、右の findings は見出し付きの説明として並べる。
@@ -595,47 +600,86 @@ def structure(slide, page, _root):
     columns = page["columns"]
     nodes = page["nodes"]
     row_count = max(node["row"] for node in nodes) + 1
-    row_height = min(88, (310 - 20 * (row_count - 1)) / row_count)
     gap = 30
+    row_gap = 22
     w = (CONTENT - gap * (len(columns) - 1)) / len(columns)
-    # cells は格子位置の重複検査、places はノード ID から配置座標を引くために使う。
-    cells = {}
-    places = {}
+    cells = set()
+    positions = {}
     for node in nodes:
         col, row, key = node["col"], node["row"], node["id"]
-        if col >= len(columns) or key in places or (col, row) in cells:
+        if col >= len(columns) or key in positions or (col, row) in cells:
             raise ValueError(f"図の配置またはノードIDが重複・範囲外です（{key}）")
-        x, y = LEFT + (w + gap) * col, top + 52 + (row_height + 22) * row
-        places[key] = (col, row, x, y)
-        cells[col, row] = key
+        positions[key] = (col, row)
+        cells.add((col, row))
+
+    # まず各矢印が使うカードの辺と、列をまたぐ長い経路の本数を数える。
+    edges = []
+    for link in page["links"]:
+        start, end = link["from"], link["to"]
+        if start not in positions or end not in positions:
+            raise ValueError("構造図の矢印に未定義のノードがあります")
+        c1, r1 = positions[start]
+        c2, r2 = positions[end]
+        if start == end:
+            raise ValueError(f"同じノードに戻る矢印は指定できません（{start}）")
+        if c1 != c2:
+            sides = ("right", "left") if c1 < c2 else ("left", "right")
+        elif abs(r1 - r2) == 1:
+            sides = ("bottom", "top") if r1 < r2 else ("top", "bottom")
+        else:
+            sides = ("right", "right")
+        edges.append(((start, sides[0]), (end, sides[1]), abs(c1 - c2)))
+
+    long_count = sum(distance > 1 for _, _, distance in edges)
+    available_bottom = BOTTOM - (27 if page.get("note") else 0)
+    first_y = top + 52
+    route_gap = min(7, 54 / long_count) if long_count else 0
+    lanes = 10 + route_gap * long_count if long_count else 0
+    row_height = min(88, (available_bottom - first_y - lanes - row_gap * (row_count - 1)) / row_count)
+    last_y = first_y + row_count * row_height + (row_count - 1) * row_gap
+    places = {key: (LEFT + (w + gap) * col, first_y + (row_height + row_gap) * row)
+              for key, (col, row) in positions.items()}
+
+    # 複数の矢印が同じ辺に出入りする場合、辺の中央付近に等間隔の接続点を配る。
+    port_counts = Counter(port for start, end, _ in edges for port in (start, end))
+    used_ports = Counter()
+
+    def port_position(port):
+        key, side = port
+        used_ports[port] += 1
+        fraction = 0.2 + 0.6 * used_ports[port] / (port_counts[port] + 1)
+        x, y = places[key]
+        if side in ("left", "right"):
+            return (x if side == "left" else x + w, y + fraction * row_height)
+        return (x + fraction * w, y if side == "top" else y + row_height)
 
     for i, label in enumerate(columns):
         heading(slide, label, LEFT + (w + gap) * i, top + 8, w)
-    # 線はカードの外辺から出入りする。結べるのは隣接列同士、または同一列の隣接行同士。
-    for edge in page["links"]:
-        if edge["from"] not in places or edge["to"] not in places:
-            raise ValueError("構造図の矢印に未定義のノードがあります")
-        c1, r1, x1, y1 = places[edge["from"]]
-        c2, r2, x2, y2 = places[edge["to"]]
-        if c1 == c2 and abs(r1 - r2) == 1:
-            cy1, cy2 = (y1 + row_height, y2) if r1 < r2 else (y1, y2 + row_height)
-            slide.line(x1 + w / 2, cy1, x2 + w / 2, cy2, ACCENT, 1.5, arrow=True)
-        elif abs(c1 - c2) == 1:
-            start, end = (x1 + w, x2) if c1 < c2 else (x1, x2 + w)
-            mid = (start + end) / 2
-            cy1, cy2 = y1 + row_height / 2, y2 + row_height / 2
-            if r1 == r2:
-                slide.line(start, cy1, end, cy2, ACCENT, 1.5, arrow=True)
-            else:
-                # 高さが異なる隣接列は、列間で折れる 3 本の線をつなぎ、最後の線だけに矢印の先端を付ける。
-                slide.line(start, cy1, mid, cy1, ACCENT, 1.5)
-                slide.line(mid, cy1, mid, cy2, ACCENT, 1.5)
-                slide.line(mid, cy2, end, cy2, ACCENT, 1.5, arrow=True)
+    long_index = 0
+    for start, end, distance in edges:
+        x1, y1 = port_position(start)
+        x2, y2 = port_position(end)
+        side = start[1]
+        if distance > 1:
+            # 中間列を横切らないよう、列間の余白からカード群の下に回り込む。
+            direction = 1 if side == "right" else -1
+            offset = gap * 0.2 + gap * 0.22 * (long_index + 1) / (long_count + 1)
+            bend1, bend2 = x1 + direction * offset, x2 - direction * offset
+            lane = last_y + 8 + route_gap * long_index
+            long_index += 1
+            turns = [(bend1, y1), (bend1, lane), (bend2, lane), (bend2, y2)]
+        elif side in ("top", "bottom"):
+            mid_y = (y1 + y2) / 2
+            turns = [(x1, mid_y), (x2, mid_y)] if x1 != x2 else []
         else:
-            raise ValueError("矢印は隣の列、または同じ列の隣の行を結んでください")
+            mid_x = x1 + gap / 2 if distance == 0 else (x1 + x2) / 2
+            turns = [(mid_x, y1), (mid_x, y2)] if y1 != y2 else []
+        points = [(x1, y1), *turns, (x2, y2)]
+        for i, (a, b) in enumerate(zip(points, points[1:]), 1):
+            slide.line(*a, *b, ACCENT, 1.5, arrow=i == len(points) - 1)
     for node in nodes:
         # 接続線の後にカードを描くため、背景とラベルを線より手前に表示できる。
-        _, _, x, y = places[node["id"]]
+        x, y = places[node["id"]]
         slide.rect(x, y, w, row_height, PALE, RULE)
         put(slide, node["label"], x + 10, y + 4, w - 20, row_height - 8, 14,
             color=NAVY, bold=True, minimum=12, align="ctr", center=True)
@@ -742,6 +786,105 @@ def issues(slide, page, _root):
 
 
 # ========================================
+# 全幅と2列を組み合わせるレイアウト
+# ========================================
+def mixed_block(slide, block, root, width, size, label):
+    """要素を測り、高さと座標を受け取る描画関数を返す。"""
+    kind = block["type"]
+    if kind == "text":
+        value = block["text"]
+        h = ceil(text_height(value, width, size)) + 2
+        title = block.get("heading")
+        title_size = max(13, size + 2)
+        title_h = ceil(text_height(title, width, title_size, True)) + 4 if title else 0
+
+        def draw_text(x, y):
+            if title:
+                put(slide, title, x, y, width, title_h, title_size, color=DARK_GREEN,
+                    bold=True, name=f"{label} 小見出し")
+            put(slide, value, x, y + title_h, width, h, size, name=label)
+
+        return title_h + h, draw_text
+    if kind == "equation":
+        formula = parse_equation(block["latex"])
+        math_size = equation_size(formula, width - 24)
+        h = ceil(formula.height * math_size * 1.22) + 12
+
+        def draw_equation(x, y):
+            slide.rect(x, y, width, h, PALE)
+            slide.equation(formula, x + 12, y + 2, width - 24, h - 4, math_size, NAVY, label)
+
+        return h, draw_equation
+    if kind == "table":
+        widths = table_widths(block, width)
+        rows = [block["headers"], *block["rows"]]
+        table_size = max(9, size - 1)
+        heights = [table_row_height(widths, row, i == 0, table_size) for i, row in enumerate(rows)]
+        return sum(heights), lambda x, y: slide.table(
+            x, y, widths, heights, rows, NAVY, PALE, INK, size=table_size)
+    if kind == "chart":
+        h = block.get("height", 220)
+        return h, lambda x, y: plot(slide, block["chart"], x, y, width, h)
+    # 枠の幅と上限の高さを使い、画像の比率を崩さず中央に置く。
+    data, ext, pixel_w, pixel_h = load_image(root, block["image"])
+    iw, ih = slide.fit_picture(pixel_w, pixel_h, width, block.get("height", 188))
+
+    def draw_image(x, y):
+        ix = x + (width - iw) / 2
+        slide.picture(data, ext, ix, y, iw, ih, block["alt"])
+        slide.track_region(label, ix, y, iw, ih)
+
+    return ih, draw_image
+
+
+def mixed(slide, page, root):
+    """行ごとに全幅または2列を選び、背の高い列の直下に次の行を置く。"""
+    gap = 10
+    column_gap = 24
+    top = body_top(page) + 5
+    # 図表を含めた全体の高さを先に測る。本文・表を 12 / 11 / 10 pt の順に試す。
+    for size in (BODY, BODY - 1, BODY - 2):
+        y = top
+        placements = []
+        for number, row in enumerate(page["rows"], 1):
+            if "right_blocks" in row:
+                left_width = (CONTENT - column_gap) * row.get("left_ratio", 0.5)
+                columns = [
+                    ("左", LEFT, left_width, row["blocks"]),
+                    ("右", LEFT + left_width + column_gap, CONTENT - left_width - column_gap,
+                     row["right_blocks"]),
+                ]
+            else:
+                columns = [("全幅", LEFT, CONTENT, row["blocks"])]
+            ends = []
+            for side, x, width, blocks in columns:
+                cursor = y
+                for i, block in enumerate(blocks, 1):
+                    location = f"本文 {number} 段目・{side} {i} 番（{block['type']}）"
+                    label = f"{location} {block['heading']}" if block.get("heading") else location
+                    try:
+                        height, draw = mixed_block(slide, block, root, width, size, label)
+                    except ValueError as error:
+                        raise ValueError(f"{label} — {error}") from error
+                    placements.append((x, cursor, draw, label))
+                    cursor += height + gap
+                ends.append(cursor)
+            y = max(ends) + 4
+        if y - gap - 4 <= BOTTOM:
+            break
+    else:
+        raise ValueError("本文が1ページに収まりません。段の構成、文章量または図表の高さを調整してください")
+
+    if size < BODY:
+        slide.warnings.append(f"混在レイアウトの本文を {size * slide.x_scale:.1f} pt に縮小しました")
+    for x, y, draw, label in placements:
+        try:
+            draw(x, y)
+        except ValueError as error:
+            raise ValueError(f"{label} — {error}") from error
+
+
+# ========================================
 # レイアウト名と描画関数の登録
 # ========================================
 # 入力の layout 名と描画関数を対応させる。形式を増やす場合は slide.schema.json にも追加する。
@@ -760,4 +903,5 @@ RENDERERS = {
     "structure": structure,
     "roadmap": roadmap,
     "issues": issues,
+    "mixed": mixed,
 }

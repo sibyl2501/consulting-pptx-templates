@@ -198,11 +198,13 @@
       "links": [
         {"from": "measure", "to": "result"},
         {"from": "usage", "to": "result"},
+        {"from": "usage", "to": "feasible"},
         {"from": "operations", "to": "feasible"},
         {"from": "result", "to": "use"},
-        {"from": "feasible", "to": "use"}
+        {"from": "feasible", "to": "use"},
+        {"from": "operations", "to": "use"}
       ],
-      "note": "施設担当者が一次記録を作成し、事業担当が施設間の観測条件を確認する。",
+      "note": "点検で重大な不具合が見つかった場合は、通常の評価と並行して整備方針に直接反映する。",
       "source": "出典・注記　架空の業務分担と情報の流れ。"
     },
     {
@@ -233,6 +235,48 @@
       ],
       "note": "確認結果は施設ごとの記録に残し、撤去や設置場所の変更が必要な場合に参照する。",
       "source": "出典・注記　架空の試行計画における確認項目。"
+    },
+    {
+      "layout": "mixed",
+      "section": "補足　効果指標の計算例",
+      "title": "日なたと日陰の暑さの差を、同じ時刻で比較する",
+      "rows": [
+        {
+          "blocks": [
+            {"type": "text", "text": "時刻ごとに日なたから日陰の値を引く。平均との差で効果の大きさを、折れ線で時間帯による違いを確認する。"}
+          ]
+        },
+        {
+          "left_ratio": 0.45,
+          "blocks": [
+            {"type": "text", "heading": "① 測定値を時刻ごとに組にする", "text": "列は時刻、上の行が日なた、下の行が日陰。各列で上下の差を取る。"},
+            {"type": "equation", "latex": "\\begin{bmatrix}30 & 33 & 31\\\\28 & 30 & 30\\end{bmatrix}"},
+            {"type": "text", "heading": "② 差の平均を計算する", "text": "差を d とし、3時点の合計を3で割る。差の単位は ℃。"},
+            {"type": "equation", "latex": "\\frac{1}{3}\\sum_{i=1}^{3}d_i=2"}
+          ],
+          "right_blocks": [
+            {"type": "chart", "height": 175, "chart": {
+              "title": "時刻別の日なたと日陰の差",
+              "kind": "line",
+              "unit": "℃",
+              "categories": ["12時", "14時", "16時"],
+              "series": [{"label": "日なた－日陰", "values": [2, 3, 1]}],
+              "min": 0,
+              "max": 4
+            }},
+            {"type": "table", "headers": ["指標", "結果"], "rows": [
+              ["3時点の平均差", "2 ℃"],
+              ["差が最大の時刻", "14時（3 ℃）"]
+            ]}
+          ]
+        },
+        {
+          "blocks": [
+            {"type": "text", "text": "試行期間の評価では同じ比較を複数日にわたって行い、時刻と天候をそろえて確認する。"}
+          ]
+        }
+      ],
+      "source": "出典・注記　計算手順を示すための架空データ。"
     }
   ]
 }

@@ -9,6 +9,7 @@ import json
 import math
 from pathlib import Path
 import re
+import sys
 
 # このファイルは入力を検査し、layouts.py にページ別の描画を依頼する。
 # pptx_document.py は図形や表をまとめて PPTX に書き出す。
@@ -71,6 +72,15 @@ def validate(value, rule, at, definitions):
     # $ref があれば、このキットの共通定義を参照先から取り出して検査する。
     if "$ref" in rule:
         rule = definitions[rule["$ref"].split("/")[-1]]
+    if "oneOf" in rule:
+        # 混在レイアウトの要素は type で候補を1つに絞り、その要素だけを検査する。
+        choices = [definitions[option["$ref"].split("/")[-1]] for option in rule["oneOf"]]
+        variants = {choice["properties"]["type"]["const"]: choice for choice in choices}
+        value_type = value.get("type") if isinstance(value, dict) else None
+        if not isinstance(value_type, str) or value_type not in variants:
+            raise InputError(f"{at}.type — 次から選択してください: {', '.join(variants)}")
+        validate(value, variants[value_type], at, definitions)
+        return
     # type が一覧なら、いずれか一つに当てはまればよい。表のセルでは文字列や数値のほか null なども使える。
     kind = rule.get("type")
     if kind:
@@ -85,6 +95,8 @@ def validate(value, rule, at, definitions):
     if isinstance(value, str) and ("minLength" in rule and not value.strip()
                                   or XML_CONTROL.search(value)):
         raise InputError(f"{at} — 空白・使用できない制御文字の指定を確認してください")
+    if isinstance(value, str) and len(value) > rule.get("maxLength", len(value)):
+        raise InputError(f"{at} — {rule['maxLength']} 文字以内にしてください")
     # 各比較は「許容範囲から外れたら真」。exclusiveMinimum は下限と同じ値も除く。
     for name, predicate, label in (
         ("minimum", lambda limit: value < limit, "以上"),
@@ -208,6 +220,9 @@ def main(argv=None):
         # 画像の相対パスは実行場所にかかわらず、入力 JSON の親ディレクトリを基準にする。
         document = json.loads(args.input.read_text(encoding="utf-8-sig"))
         slides = render(document, args.input.resolve().parent, page_size=args.page_size, font=args.font)
+        for slide in slides:
+            for warning in dict.fromkeys(slide.warnings):
+                print(f"警告  {slide.name} — {warning}", file=sys.stderr)
         # 検査モードでも配置を実行する。文字や表の収まりを確かめ、ファイルへの書き出しを省く。
         if args.check:
             print(f"検査完了。入力 {len(document['slides'])} 件、出力予定 {len(slides)} 枚")

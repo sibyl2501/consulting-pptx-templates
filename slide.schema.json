@@ -54,6 +54,9 @@
           },
           {
             "$ref": "#/$defs/layout_issues"
+          },
+          {
+            "$ref": "#/$defs/layout_mixed"
           }
         ]
       },
@@ -793,7 +796,7 @@
     },
     "layout_structure": {
       "title": "構造・関係図",
-      "description": "関係者、情報、機器などを格子に置き、矢印で関係を示す。",
+      "description": "関係者、情報、機器などを格子に置き、分岐・合流や離れたノード間の関係を示す。",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -1048,6 +1051,230 @@
         "layout",
         "title",
         "items"
+      ]
+    },
+    "block_text": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "text"
+        },
+        "heading": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "type",
+        "text"
+      ]
+    },
+    "block_equation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "equation"
+        },
+        "latex": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 600,
+          "description": "対応する LaTeX 記法。バックスラッシュは JSON でエスケープする。"
+        }
+      },
+      "required": [
+        "type",
+        "latex"
+      ]
+    },
+    "block_table": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "table"
+        },
+        "headers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 2,
+          "maxItems": 8
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/cell"
+            },
+            "minItems": 2,
+            "maxItems": 8
+          },
+          "minItems": 1
+        },
+        "widths": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 8
+        }
+      },
+      "required": [
+        "type",
+        "headers",
+        "rows"
+      ]
+    },
+    "block_chart": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "chart"
+        },
+        "chart": {
+          "$ref": "#/$defs/chart"
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 170,
+          "maximum": 320
+        }
+      },
+      "required": [
+        "type",
+        "chart"
+      ]
+    },
+    "block_image": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "image"
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1,
+          "description": "入力 JSON からの相対パス。PNG または JPEG。"
+        },
+        "alt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 36,
+          "maximum": 320
+        }
+      },
+      "required": [
+        "type",
+        "image",
+        "alt"
+      ]
+    },
+    "mixed_block": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/block_text"
+        },
+        {
+          "$ref": "#/$defs/block_equation"
+        },
+        {
+          "$ref": "#/$defs/block_table"
+        },
+        {
+          "$ref": "#/$defs/block_chart"
+        },
+        {
+          "$ref": "#/$defs/block_image"
+        }
+      ]
+    },
+    "mixed_row": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mixed_block"
+          },
+          "minItems": 1,
+          "maxItems": 12,
+          "description": "全幅、または左右2列の左側に上から配置する。"
+        },
+        "right_blocks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mixed_block"
+          },
+          "minItems": 1,
+          "maxItems": 12,
+          "description": "指定した段を2列にし、右側に上から配置する。"
+        },
+        "left_ratio": {
+          "type": "number",
+          "minimum": 0.3,
+          "maximum": 0.7,
+          "description": "2列にするときの左列の幅の比率。既定は 0.5。"
+        }
+      },
+      "required": [
+        "blocks"
+      ]
+    },
+    "layout_mixed": {
+      "title": "本文・図表・数式の混在",
+      "description": "全幅と2列を段ごとに組み合わせ、本文・図表・数式を上から順に詰める。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "mixed"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共通見出しの上に置く章名。省略時は資料名。"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "出典・調査条件・注記。"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mixed_row"
+          },
+          "minItems": 1,
+          "maxItems": 6
+        }
+      },
+      "required": [
+        "layout",
+        "title",
+        "rows"
       ]
     }
   }
