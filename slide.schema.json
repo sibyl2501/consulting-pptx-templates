@@ -1,0 +1,1054 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "閲覧用PowerPointの入力",
+  "description": "slides に JSON で型と内容を指定する。座標や装飾は Python のレイアウトに従う。",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "project": {
+      "type": "string",
+      "minLength": 1
+    },
+    "slides": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/layout_cover"
+          },
+          {
+            "$ref": "#/$defs/layout_contents"
+          },
+          {
+            "$ref": "#/$defs/layout_section"
+          },
+          {
+            "$ref": "#/$defs/layout_summary"
+          },
+          {
+            "$ref": "#/$defs/layout_background"
+          },
+          {
+            "$ref": "#/$defs/layout_method"
+          },
+          {
+            "$ref": "#/$defs/layout_chart"
+          },
+          {
+            "$ref": "#/$defs/layout_comparison"
+          },
+          {
+            "$ref": "#/$defs/layout_data_table"
+          },
+          {
+            "$ref": "#/$defs/layout_annotated_image"
+          },
+          {
+            "$ref": "#/$defs/layout_case"
+          },
+          {
+            "$ref": "#/$defs/layout_structure"
+          },
+          {
+            "$ref": "#/$defs/layout_roadmap"
+          },
+          {
+            "$ref": "#/$defs/layout_issues"
+          }
+        ]
+      },
+      "minItems": 1
+    }
+  },
+  "required": [
+    "project",
+    "slides"
+  ],
+  "$defs": {
+    "note": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "heading": {
+          "type": "string",
+          "minLength": 1
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "heading",
+        "text"
+      ]
+    },
+    "cell": {
+      "type": [
+        "string",
+        "number",
+        "boolean",
+        "null"
+      ]
+    },
+    "chart": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "enum": [
+            "line",
+            "bar"
+          ]
+        },
+        "unit": {
+          "type": "string",
+          "minLength": 1
+        },
+        "categories": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 2,
+          "maxItems": 12
+        },
+        "series": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "label": {
+                "type": "string",
+                "minLength": 1
+              },
+              "values": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                },
+                "minItems": 2,
+                "maxItems": 12
+              }
+            },
+            "required": [
+              "label",
+              "values"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 4
+        },
+        "min": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        }
+      },
+      "required": [
+        "title",
+        "kind",
+        "categories",
+        "series"
+      ]
+    },
+    "layout_cover": {
+      "title": "表紙",
+      "description": "資料名、対象、読み手に伝える資料の範囲を示す。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "cover"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "eyebrow": {
+          "type": "string",
+          "minLength": 1
+        },
+        "subtitle": {
+          "type": "string",
+          "minLength": 1
+        },
+        "meta": {
+          "type": "string",
+          "minLength": 1
+        },
+        "topics": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "maxItems": 5
+        }
+      },
+      "required": [
+        "layout",
+        "title"
+      ]
+    },
+    "layout_contents": {
+      "title": "目次",
+      "description": "章の読みどころ、該当するページ番号を検索できるようにする。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "contents"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共通見出しの上に置く章名。省略時は資料名。"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "出典・調査条件・注記。"
+        },
+        "intro": {
+          "type": "string",
+          "minLength": 1
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "title": {
+                "type": "string",
+                "minLength": 1
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1
+              },
+              "page": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 9999
+              }
+            },
+            "required": [
+              "title",
+              "page"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 6
+        }
+      },
+      "required": [
+        "layout",
+        "title",
+        "items"
+      ]
+    },
+    "layout_section": {
+      "title": "章扉",
+      "description": "議題を切り替え、次の章で扱う論点を示す。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "section"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "eyebrow": {
+          "type": "string",
+          "minLength": 1
+        },
+        "intro": {
+          "type": "string",
+          "minLength": 1
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/note"
+          },
+          "minItems": 1,
+          "maxItems": 4
+        }
+      },
+      "required": [
+        "layout",
+        "title",
+        "items"
+      ]
+    },
+    "layout_summary": {
+      "title": "エグゼクティブサマリー",
+      "description": "資料全体の判断と、その根拠、次の行動を一読できるようにする。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "summary"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共通見出しの上に置く章名。省略時は資料名。"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "出典・調査条件・注記。"
+        },
+        "lead": {
+          "type": "string",
+          "minLength": 1
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/note"
+          },
+          "minItems": 1,
+          "maxItems": 6
+        }
+      },
+      "required": [
+        "layout",
+        "title",
+        "lead",
+        "items"
+      ]
+    },
+    "layout_background": {
+      "title": "背景・目的・論点",
+      "description": "背景と目的を示し、今回答える論点や調査の対象範囲を明確にする。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "background"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共通見出しの上に置く章名。省略時は資料名。"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "出典・調査条件・注記。"
+        },
+        "context": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/note"
+          },
+          "minItems": 1,
+          "maxItems": 5
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/note"
+          },
+          "minItems": 1,
+          "maxItems": 5
+        }
+      },
+      "required": [
+        "layout",
+        "title",
+        "context",
+        "questions"
+      ]
+    },
+    "layout_method": {
+      "title": "調査方法・実験条件",
+      "description": "調査や実験の条件・対象・指標と手順を同じページで示す。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "method"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共通見出しの上に置く章名。省略時は資料名。"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "出典・調査条件・注記。"
+        },
+        "conditions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/note"
+          },
+          "minItems": 1,
+          "maxItems": 7
+        },
+        "steps": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/note"
+          },
+          "minItems": 1,
+          "maxItems": 6
+        }
+      },
+      "required": [
+        "layout",
+        "title",
+        "conditions",
+        "steps"
+      ]
+    },
+    "layout_chart": {
+      "title": "グラフと考察",
+      "description": "1〜2点の棒・折れ線グラフと、読み取りや留意点を並べる。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "chart"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共通見出しの上に置く章名。省略時は資料名。"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "出典・調査条件・注記。"
+        },
+        "charts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/chart"
+          },
+          "minItems": 1,
+          "maxItems": 2
+        },
+        "notes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/note"
+          },
+          "minItems": 1,
+          "maxItems": 4
+        }
+      },
+      "required": [
+        "layout",
+        "title",
+        "charts",
+        "notes"
+      ]
+    },
+    "layout_comparison": {
+      "title": "比較・評価マトリクス",
+      "description": "複数案を同じ評価軸で比較し、判断理由を示す。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "comparison"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共通見出しの上に置く章名。省略時は資料名。"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "出典・調査条件・注記。"
+        },
+        "intro": {
+          "type": "string",
+          "minLength": 1
+        },
+        "headers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 2,
+          "maxItems": 8
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/cell"
+            },
+            "minItems": 2,
+            "maxItems": 8
+          },
+          "minItems": 1
+        },
+        "widths": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 8
+        },
+        "aligns": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "l",
+              "ctr",
+              "r"
+            ]
+          },
+          "minItems": 2,
+          "maxItems": 8
+        },
+        "highlight": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "layout",
+        "title",
+        "headers",
+        "rows"
+      ]
+    },
+    "layout_data_table": {
+      "title": "詳細データ表",
+      "description": "詳細な記録や結果を掲載する。行に応じて見出し付きの続きページを自動追加する。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "data_table"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共通見出しの上に置く章名。省略時は資料名。"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "出典・調査条件・注記。"
+        },
+        "intro": {
+          "type": "string",
+          "minLength": 1
+        },
+        "headers": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 2,
+          "maxItems": 8
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/$defs/cell"
+            },
+            "minItems": 2,
+            "maxItems": 8
+          },
+          "minItems": 1
+        },
+        "widths": {
+          "type": "array",
+          "items": {
+            "type": "number",
+            "exclusiveMinimum": 0
+          },
+          "minItems": 2,
+          "maxItems": 8
+        },
+        "aligns": {
+          "type": "array",
+          "items": {
+            "enum": [
+              "l",
+              "ctr",
+              "r"
+            ]
+          },
+          "minItems": 2,
+          "maxItems": 8
+        },
+        "highlight": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 7
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "layout",
+        "title",
+        "headers",
+        "rows"
+      ]
+    },
+    "layout_annotated_image": {
+      "title": "図・写真と注釈",
+      "description": "図版や写真の該当箇所に番号を置き、横に意味を説明する。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "annotated_image"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共通見出しの上に置く章名。省略時は資料名。"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "出典・調査条件・注記。"
+        },
+        "image": {
+          "type": "string",
+          "minLength": 1,
+          "description": "入力JSONの位置からの相対パス、または絶対パス。PNG/JPEGを使用。"
+        },
+        "alt": {
+          "type": "string",
+          "minLength": 1
+        },
+        "caption": {
+          "type": "string",
+          "minLength": 1
+        },
+        "annotations": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "x": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "y": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              },
+              "heading": {
+                "type": "string",
+                "minLength": 1
+              },
+              "text": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "x",
+              "y",
+              "heading",
+              "text"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 5
+        }
+      },
+      "required": [
+        "layout",
+        "title",
+        "image",
+        "alt",
+        "annotations"
+      ]
+    },
+    "layout_case": {
+      "title": "事例分析",
+      "description": "個別事例の概要を整理し、取組、結果、適用条件を読み解く。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "case"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共通見出しの上に置く章名。省略時は資料名。"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "出典・調査条件・注記。"
+        },
+        "profile": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/note"
+          },
+          "minItems": 1,
+          "maxItems": 6
+        },
+        "findings": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/note"
+          },
+          "minItems": 1,
+          "maxItems": 6
+        }
+      },
+      "required": [
+        "layout",
+        "title",
+        "profile",
+        "findings"
+      ]
+    },
+    "layout_structure": {
+      "title": "構造・関係図",
+      "description": "関係者、情報、機器などを格子に置き、矢印で関係を示す。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "structure"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共通見出しの上に置く章名。省略時は資料名。"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "出典・調査条件・注記。"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 2,
+          "maxItems": 4
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "col": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3
+              },
+              "row": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "col",
+              "row",
+              "label"
+            ]
+          },
+          "minItems": 2,
+          "maxItems": 12
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "type": "string",
+                "minLength": 1
+              },
+              "to": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 20
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "layout",
+        "title",
+        "columns",
+        "nodes",
+        "links"
+      ]
+    },
+    "layout_roadmap": {
+      "title": "工程・ロードマップ",
+      "description": "作業の実施時期と担当、到達点を月別・工程別に示す。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "roadmap"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共通見出しの上に置く章名。省略時は資料名。"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "出典・調査条件・注記。"
+        },
+        "periods": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 2,
+          "maxItems": 8
+        },
+        "tasks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "task": {
+                "type": "string",
+                "minLength": 1
+              },
+              "owner": {
+                "type": "string",
+                "minLength": 1
+              },
+              "start": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 7
+              },
+              "end": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 7
+              },
+              "outcome": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "task",
+              "start",
+              "end"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 6
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "layout",
+        "title",
+        "periods",
+        "tasks"
+      ]
+    },
+    "layout_issues": {
+      "title": "課題・対応策",
+      "description": "課題ごとの背景、対策、担当を対応づける。",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "layout": {
+          "const": "issues"
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "description": "ページの見出し。本文では読み手に伝える結論。"
+        },
+        "section": {
+          "type": "string",
+          "minLength": 1,
+          "description": "共通見出しの上に置く章名。省略時は資料名。"
+        },
+        "source": {
+          "type": "string",
+          "minLength": 1,
+          "description": "出典・調査条件・注記。"
+        },
+        "intro": {
+          "type": "string",
+          "minLength": 1
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "issue": {
+                "type": "string",
+                "minLength": 1
+              },
+              "impact": {
+                "type": "string",
+                "minLength": 1
+              },
+              "action": {
+                "type": "string",
+                "minLength": 1
+              },
+              "owner": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "issue",
+              "impact",
+              "action",
+              "owner"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 10
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "layout",
+        "title",
+        "items"
+      ]
+    }
+  }
+}
