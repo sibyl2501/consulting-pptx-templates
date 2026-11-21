@@ -1,5 +1,5 @@
 # スライドの図形・表・テーマを Office Open XML（OOXML）で記述し、ZIP 形式の PPTX にまとめる。
-# レイアウトや配色の選択は build_slides.py が担当する。このファイルの座標・寸法・文字サイズはポイント（pt）。
+# レイアウトが渡す座標・寸法・文字サイズは基準キャンバスでの値。書き出し時に用紙に合わせて換算する。
 """Write editable PowerPoint shapes, tables and an Office theme using only Python."""
 from itertools import count
 from math import ceil, isfinite
@@ -10,8 +10,14 @@ from xml.sax.saxutils import escape, quoteattr
 from zipfile import ZIP_DEFLATED, ZipFile
 import unicodedata
 
-# 全スライド共通の 16:9 の寸法。座標の原点は左上で、x は右、y は下に増える。
-WIDTH, HEIGHT = 960, 540  # PowerPoint points, equivalent to 13⅓ × 7½ inches.
+# layouts.py が使う基準キャンバス。座標の原点は左上で、x は右、y は下に増える。
+WIDTH, HEIGHT = 960, 540
+# 出力サイズはポイント（1 インチ = 72 pt）。A4 横は 297 × 210 mm。
+DEFAULT_PAGE_SIZE = "a4"
+PAGE_SIZES = {
+    "a4": (297 * 72 / 25.4, 210 * 72 / 25.4, "A4"),
+    "16:9": (WIDTH, HEIGHT, "screen16x9"),
+}
 # テキストの直接指定と、テーマの既定フォントで共通に使うフォント名。
 FONT = "Yu Gothic"
 # DrawingML の図形・文字・表要素に使う a: 名前空間。
@@ -104,7 +110,7 @@ def paragraph(value, size, color, bold, align):
             f'<a:endParaRPr lang="ja-JP" sz="{round(size * 100)}"/></a:p>')
 
 
-def text_body(tag, value, w, h, size, color, bold, align, anchor, minimum=None):
+def text_body(tag, value, w, h, size, color, bold, align, anchor, minimum=None, *, scale=1):
     """文字サイズを指定下限まで調整し、収まらないときは場所を知らせる。"""
     value = str(value)
     anchor = {"middle": "ctr", "top": "t"}.get(anchor, anchor)
@@ -119,15 +125,19 @@ def text_body(tag, value, w, h, size, color, bold, align, anchor, minimum=None):
     body = (f'<a:bodyPr wrap="square" lIns="0" tIns="0" rIns="0" bIns="0" anchor="{anchor}">'
             '<a:noAutofit/></a:bodyPr>')
     return (f'<{tag}>{body}<a:lstStyle/>' +
-            ''.join(paragraph(line, size, color, bold, align) for line in value.split("\n")) +
+            ''.join(paragraph(line, size * scale, color, bold, align) for line in value.split("\n")) +
             f'</{tag}>')
 
 
 # 1 枚のスライドを組み立てる。図形や表の XML を追加順に保持し、後から追加した要素が手前に描画される。
 class Slide:
     # スライド名、要素の格納先、スライド内で一意な図形 ID の採番を初期化する。
-    def __init__(self, name):
+    def __init__(self, name, page_size=DEFAULT_PAGE_SIZE):
         self.name = name
+        self.page_size = page_size
+        paper_width, paper_height, _ = PAGE_SIZES[page_size]
+        self.x_scale = paper_width / WIDTH
+        self.y_scale = paper_height / HEIGHT
         self.parts = []
         self.ids = count(2)
         self.pictures = []
@@ -137,7 +147,24 @@ class Slide:
                 or min(x, y, w, h) < 0 or x + w > WIDTH + 0.01 or y + h > HEIGHT + 0.01):
             raise ValueError(f"スライドの外に配置されています（{name}）")
 
-    # 矩形・線・テキストに共通する図形 XML を追加する。原点より左上にはみ出す位置と右下端の超過を検査する。
+    def fit_picture(self, pixel_width, pixel_height, frame_width, frame_height):
+        """用紙上で元の縦横比を保つ画像の幅・高さを、基準キャンバスの単位で返す。"""
+        scale = min(frame_width * self.x_scale / pixel_width,
+                    frame_height * self.y_scale / pixel_height)
+        return pixel_width * scale / self.x_scale, pixel_height * scale / self.y_scale
+
+    def _transform(self, tag, x, y, w, h, attrs="", *, keep_ratio=False):
+        """基準キャンバスの座標を、選んだ用紙の寸法に変換する。"""
+        x, y, w, h = x * self.x_scale, y * self.y_scale, w * self.x_scale, h * self.y_scale
+        if keep_ratio:
+            # 円などの縦横比を保ち、変換前の図形の中心が同じ位置に来るよう補正する。
+            scale = min(self.x_scale, self.y_scale)
+            scaled_w, scaled_h = w * scale / self.x_scale, h * scale / self.y_scale
+            x, y = x + (w - scaled_w) / 2, y + (h - scaled_h) / 2
+            w, h = scaled_w, scaled_h
+        return transform(tag, x, y, w, h, attrs)
+
+    # 矩形・線・テキストに共通する図形 XML を追加し、基準キャンバス内に収まるか確認する。
     def _shape(self, name, x, y, w, h, geometry, color, border, body="", flips=""):
         self.check_bounds(name, x, y, w, h)
         # テキストを渡された図形には txBox を指定する。quoteattr() は図形名を XML 属性用に引用・エスケープする。
@@ -146,28 +173,30 @@ class Slide:
         self.parts.append(
             f'<p:sp><p:nvSpPr><p:cNvPr id="{shape_id}" name={quoteattr(name)}/>'
             f'<p:cNvSpPr{textbox}/><p:nvPr/></p:nvSpPr><p:spPr>'
-            f'{transform("a:xfrm", x, y, w, h, flips)}'
+            f'{self._transform("a:xfrm", x, y, w, h, flips, keep_ratio=geometry == "ellipse")}'
             f'<a:prstGeom prst="{geometry}"><a:avLst/></a:prstGeom>'
             f'{fill(color)}{border}</p:spPr>{body}</p:sp>'
         )
 
     # 背景・罫線などの図形を配置する。geometry で rect、ellipse、rightArrow などの形状を指定できる。
     def rect(self, x, y, w, h, color, border=None, name="背景・罫線", geometry="rect"):
-        self._shape(name, x, y, w, h, geometry, color, outline(border))
+        self._shape(name, x, y, w, h, geometry, color, outline(border, 0.75 * self.x_scale))
 
     # 始点・終点から線を描く。小さい側の座標と正の寸法を取り、端点の向きは水平・垂直反転で表す。
     def line(self, x1, y1, x2, y2, color, width=1, name="線", arrow=False):
         flip_h = ' flipH="1"' if x2 < x1 else ''
         flip_v = ' flipV="1"' if y2 < y1 else ''
         self._shape(name, min(x1, x2), min(y1, y2), abs(x1-x2), abs(y1-y2),
-                    "line", None, outline(color, width, arrow), flips=flip_h + flip_v)
+                    "line", None, outline(color, width * self.x_scale, arrow), flips=flip_h + flip_v)
 
     # 指定位置に編集可能なテキストボックスを作る。name を省くと本文の先頭を図形名に使う。
     def text(self, value, x, y, w, h, size, color, bold=False, align="l",
              anchor="top", name=None, minimum=None):
         label = name or str(value).replace("\n", " ")[:50] or "本文"
         try:
-            content = text_body("p:txBody", value, w, h, size, color, bold, align, anchor, minimum)
+            # 横幅と文字を同じ倍率で換算し、基準キャンバスで見積もった改行を保ちやすくする。
+            content = text_body("p:txBody", value, w, h, size, color, bold, align, anchor, minimum,
+                                scale=self.x_scale)
         except ValueError as error:
             raise ValueError(f"{label} — {error}") from error
         self._shape(label, x, y, w, h, "rect", None, outline(), content)
@@ -182,7 +211,7 @@ class Slide:
             f'<p:pic><p:nvPicPr><p:cNvPr id="{shape_id}" name="図版" descr={quoteattr(alternative)}/>'
             '<p:cNvPicPr><a:picLocks noChangeAspect="1"/></p:cNvPicPr><p:nvPr/></p:nvPicPr>'
             f'<p:blipFill><a:blip r:embed="rId{rid}"/><a:stretch><a:fillRect/></a:stretch></p:blipFill>'
-            f'<p:spPr>{transform("a:xfrm", x, y, w, h)}'
+            f'<p:spPr>{self._transform("a:xfrm", x, y, w, h)}'
             '<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></p:spPr></p:pic>'
         )
 
@@ -206,23 +235,25 @@ class Slide:
                     color = navy
                 # セルの 4 辺に同じ 0.65 pt の罫線を設定する。
                 borders = ''.join(
-                    f'<a:ln{edge} w="{emu(0.65)}">{fill("D8E2EB")}</a:ln{edge}>'
+                    f'<a:ln{edge} w="{emu(0.65 * self.x_scale)}">{fill("D8E2EB")}</a:ln{edge}>'
                     for edge in ("L", "R", "T", "B")
                 )
                 align = aligns[col_index] if aligns and row_index else "l"
                 content = text_body("a:txBody", cell_text(value), width - 16, height - 8, size,
-                                    color, row_index == 0 or col_index == 0, align, "middle")
-                cells.append(f'<a:tc>{content}<a:tcPr marL="{emu(8)}" marR="{emu(8)}" '
-                             f'marT="{emu(4)}" marB="{emu(4)}" anchor="ctr">'
+                                    color, row_index == 0 or col_index == 0, align, "middle",
+                                    scale=self.x_scale)
+                cells.append(f'<a:tc>{content}<a:tcPr marL="{emu(8 * self.x_scale)}" '
+                             f'marR="{emu(8 * self.x_scale)}" marT="{emu(4 * self.y_scale)}" '
+                             f'marB="{emu(4 * self.y_scale)}" anchor="ctr">'
                              f'{borders}{fill(bg)}</a:tcPr></a:tc>')
-            tbl_rows.append(f'<a:tr h="{emu(height)}">{"".join(cells)}</a:tr>')
+            tbl_rows.append(f'<a:tr h="{emu(height * self.y_scale)}">{"".join(cells)}</a:tr>')
         # 列のグリッド定義と全体の外枠を作り、各セルを持つ表として図形ツリーに追加する。
-        grid = ''.join(f'<a:gridCol w="{emu(width)}"/>' for width in widths)
+        grid = ''.join(f'<a:gridCol w="{emu(width * self.x_scale)}"/>' for width in widths)
         shape_id = next(self.ids)
         self.parts.append(
             f'<p:graphicFrame><p:nvGraphicFramePr><p:cNvPr id="{shape_id}" name="編集用の表"/>'
             '<p:cNvGraphicFramePr/><p:nvPr/></p:nvGraphicFramePr>'
-            f'{transform("p:xfrm", x, y, sum(widths), sum(heights))}'
+            f'{self._transform("p:xfrm", x, y, sum(widths), sum(heights))}'
             f'<a:graphic><a:graphicData uri="{TABLE}"><a:tbl><a:tblPr/><a:tblGrid>'
             f'{grid}</a:tblGrid>{"".join(tbl_rows)}</a:tbl></a:graphicData></a:graphic>'
             '</p:graphicFrame>'
@@ -273,6 +304,11 @@ def theme(navy, accent):
 
 # Slide の一覧とテーマ色を受け取り、編集可能な .pptx を指定パスへ保存する。
 def write_pptx(path, slides, navy, accent):
+    # PPTX 内のページ寸法は資料全体に共通。異なるサイズのスライドを混在させない。
+    page_size = slides[0].page_size if slides else DEFAULT_PAGE_SIZE
+    if any(slide.page_size != page_size for slide in slides):
+        raise ValueError("資料内のスライドサイズをそろえてください")
+    paper_width, paper_height, size_type = PAGE_SIZES[page_size]
     presentation = "presentationml."
     parts = {
         # パッケージを開いたときの入口。ここからプレゼンテーション本体にたどる。
@@ -282,7 +318,7 @@ def write_pptx(path, slides, navy, accent):
             f'<p:presentation {NS}><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rId1"/>'
             f'</p:sldMasterIdLst><p:sldIdLst>'
             + ''.join(f'<p:sldId id="{256+i}" r:id="rId{i+2}"/>' for i in range(len(slides)))
-            + f'</p:sldIdLst><p:sldSz cx="{emu(WIDTH)}" cy="{emu(HEIGHT)}" type="screen16x9"/>'
+            + f'</p:sldIdLst><p:sldSz cx="{emu(paper_width)}" cy="{emu(paper_height)}" type="{size_type}"/>'
             # ノートのページサイズは EMU で指定し、文書の既定テキスト言語を日本語にする。
             '<p:notesSz cx="6858000" cy="9144000"/><p:defaultTextStyle><a:defPPr>'
             '<a:defRPr lang="ja-JP"/></a:defPPr></p:defaultTextStyle></p:presentation>'
