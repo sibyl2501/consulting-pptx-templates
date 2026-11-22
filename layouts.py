@@ -9,7 +9,10 @@ from pathlib import Path
 from struct import unpack
 
 from equations import equation_size, parse_equation
-from pptx_document import DEFAULT_FONT, DEFAULT_PAGE_SIZE, HEIGHT, WIDTH, Slide, cell_text, fitted_text_size, text_height
+from pptx_document import (
+    DEFAULT_FONT, DEFAULT_HEADING_SIZE, DEFAULT_PAGE_SIZE, HEIGHT, MIN_HEADING_SIZE, WIDTH, Slide,
+    canvas_height, canvas_scale, cell_text, fitted_text_size, text_height,
+)
 
 
 # ========================================
@@ -32,18 +35,18 @@ SERIES = (ACCENT, "4272A4", "A25830", "765797")
 # ========================================
 # 余白と本文領域の指定
 # ========================================
-# x は右向き、y は下向き。LEFT〜RIGHT と本文の開始位置〜BOTTOM が主な本文領域。
+# x は右向き、y は下向き。LEFT〜RIGHT と、用紙ごとに求める上端・下端が主な本文領域。
 # 本文領域の外に共通見出しと出典・ページ番号を置く。
 LEFT = 39
 RIGHT = WIDTH - LEFT
 CONTENT = RIGHT - LEFT
-BOTTOM = 495
+BODY_BOTTOM_MARGIN = 45
+A4_BODY_PT = 13
+A4_MIN_BODY_PT = 11
 
 # 見出しの座標と文字サイズを保ち、1行で収まるときは罫線を見出しの近くに置く。
 TITLE_Y = 38
 TITLE_HEIGHT = 62
-TITLE_SIZE = 27
-TITLE_MIN = 22
 TITLE_RULE_LIMIT = 102
 TITLE_RULE_GAP = 3
 BODY_GAP = 9
@@ -128,42 +131,49 @@ def row_pairs(slide, items, x, y, w, bottom, label_w=156, balanced=False):
 # ========================================
 # 共通見出しとフッター
 # ========================================
-def title_rule_y(title):
-    # 実際に採用する文字サイズで高さを測り、2 行見出しでも罫線が文字にかからないようにする。
-    size = fitted_text_size(title, CONTENT, TITLE_HEIGHT, TITLE_SIZE, True, TITLE_MIN)
+def body_bottom(page_size):
+    return canvas_height(page_size) - BODY_BOTTOM_MARGIN
+
+
+def title_rule_y(title, page_size, heading_size):
+    # 出力上のポイント値をレイアウト座標に戻して測る。罫線は実際の行数に合わせる。
+    scale = canvas_scale(page_size)
+    size = fitted_text_size(title, CONTENT, TITLE_HEIGHT, heading_size / scale,
+                            True, MIN_HEADING_SIZE / scale)
     height = text_height(title, CONTENT, size, True)
     return min(TITLE_RULE_LIMIT, TITLE_Y + ceil(height) + TITLE_RULE_GAP)
 
 
-def body_top(page):
-    # 改ページを計算する表も同じ位置から始める。
-    return title_rule_y(page["title"]) + BODY_GAP
+def body_top(page, page_size, heading_size):
+    return title_rule_y(page["title"], page_size, heading_size) + BODY_GAP
 
 
-def standard_slide(page, document, page_no, page_size=DEFAULT_PAGE_SIZE, *, font=DEFAULT_FONT):
+def standard_slide(page, document, page_no, page_size=DEFAULT_PAGE_SIZE, *,
+                   font=DEFAULT_FONT, heading_size=DEFAULT_HEADING_SIZE):
     """表紙と章扉以外の共通見出し、資料名、出典を置く。"""
     # スライド名は通し番号とタイトル。見出し上の小さなラベルは section があれば章名、なければ資料名。
-    slide = Slide(f"{page_no:02d} {page['title']}", page_size, font=font)
+    slide = Slide(f"{page_no:02d} {page['title']}", page_size, font=font, heading_size=heading_size)
     put(slide, page.get("section", document.get("project", "")), LEFT, 20, 660, 16, 10,
         color=DARK_GREEN, bold=True)
     # 詳細表が分割された場合は、右上に「表 2/3」のような続き番号を置く。
     if page.get("continuation"):
         put(slide, f"表 {page['continuation']}", RIGHT - 135, 20, 135, 16, 10,
             color=DARK_GREEN, align="r")
-    put(slide, page["title"], LEFT, TITLE_Y, CONTENT, TITLE_HEIGHT, TITLE_SIZE,
-        bold=True, color=NAVY, minimum=TITLE_MIN, name="結論見出し")
-    rule(slide, title_rule_y(page["title"]), color=ACCENT, weight=1.3)
+    put(slide, page["title"], LEFT, TITLE_Y, CONTENT, TITLE_HEIGHT, heading_size / slide.x_scale,
+        bold=True, color=NAVY, minimum=MIN_HEADING_SIZE / slide.x_scale, name="結論見出し")
+    rule(slide, title_rule_y(page["title"], page_size, heading_size), color=ACCENT, weight=1.3)
     footer(slide, page, page_no)
     return slide
 
 
 # 出典は任意。ページ番号に必要な幅を残し、出典欄は残りの幅を使う。
 def footer(slide, page, number):
-    rule(slide, 507)
+    base = slide.height - (HEIGHT - 507)
+    rule(slide, base)
     if page.get("source"):
-        put(slide, page["source"], LEFT, 513, CONTENT - 43, 22, 9.5, color=MUTED,
+        put(slide, page["source"], LEFT, base + 6, CONTENT - 43, 22, 9.5, color=MUTED,
             minimum=9, name="出典・注記")
-    put(slide, f"{number:02d}", RIGHT - 36, 512, 36, 17, 10, color=MUTED, align="r")
+    put(slide, f"{number:02d}", RIGHT - 36, base + 5, 36, 17, 10, color=MUTED, align="r")
 
 
 # ========================================
@@ -172,28 +182,29 @@ def footer(slide, page, number):
 # 表紙は右の濃色帯に topics、左に表題と副題などを置く。
 # _root は画像フォルダを受ける共通引数で、画像を使わない形式では参照しない。
 def cover(slide, page, _root):
-    slide.rect(0, 0, WIDTH, HEIGHT, PAPER)
-    slide.rect(677, 0, WIDTH - 677, HEIGHT, NAVY)
-    slide.rect(42, 66, 42, 4, ACCENT)
-    put(slide, page.get("eyebrow", ""), 42, 80, 603, 37, 13, color=DARK_GREEN, bold=True)
-    put(slide, page["title"], 42, 138, 588, 157, 41, color=NAVY, bold=True, minimum=32)
+    slide.rect(0, 0, WIDTH, slide.height, PAPER)
+    slide.rect(677, 0, WIDTH - 677, slide.height, NAVY)
+    offset = (slide.height - HEIGHT) / 2
+    slide.rect(42, 66 + offset, 42, 4, ACCENT)
+    put(slide, page.get("eyebrow", ""), 42, 80 + offset, 603, 37, 13, color=DARK_GREEN, bold=True)
+    put(slide, page["title"], 42, 138 + offset, 588, 157, 41, color=NAVY, bold=True, minimum=32)
     if page.get("subtitle"):
-        put(slide, page["subtitle"], 44, 309, 586, 81, 17, color=MUTED, minimum=15)
+        put(slide, page["subtitle"], 44, 309 + offset, 586, 81, 17, color=MUTED, minimum=15)
     if page.get("meta"):
-        rule(slide, 454, 44, 627)
-        put(slide, page["meta"], 44, 469, 583, 47, 12, color=MUTED, minimum=11)
+        rule(slide, slide.height - 86, 44, 627)
+        put(slide, page["meta"], 44, slide.height - 71, 583, 47, 12, color=MUTED, minimum=11)
     if page.get("topics"):
-        put(slide, "本資料の範囲", 711, 134, 210, 26, 14, color="A5E2D8", bold=True)
+        put(slide, "本資料の範囲", 711, 134 + offset, 210, 26, 14, color="A5E2D8", bold=True)
     # 話題の区切りは各項目を同じ高さでそろえる。
     for i, label in enumerate(page.get("topics", [])):
-        y = 178 + 58 * i
+        y = 178 + offset + 58 * i
         rule(slide, y, 711, 923, color="4D6975")
         put(slide, label, 711, y + 11, 207, 44, 15, color=WHITE, minimum=13)
 
 
 # 目次。前置きの有無で表の開始位置を変え、章名と説明の折り返しを測って行高を決める。
 def contents(slide, page, _root):
-    top = body_top(page)
+    top = body_top(page, slide.page_size, slide.heading_size)
     if page.get("intro"):
         put(slide, page["intro"], LEFT, top + 7, CONTENT, 42, 15, color=MUTED)
     y = top + (59 if page.get("intro") else 12)
@@ -203,7 +214,7 @@ def contents(slide, page, _root):
             ceil(text_height(item.get("text", ""), 498, 13)) + 14)
         for item in entries
     ]
-    if y + sum(heights) > BOTTOM:
+    if y + sum(heights) > body_bottom(slide.page_size):
         raise ValueError("目次の章名または説明が長すぎます")
     # 左端の通し番号と右端の参照ページは別。参照先は入力の item["page"] を使う。
     for i, (item, h) in enumerate(zip(entries, heights, strict=True), 1):
@@ -222,8 +233,8 @@ def contents(slide, page, _root):
 
 # 章扉の左に章名と導入、右にこの章で扱う論点（items）を置く。
 def section(slide, page, _root):
-    slide.rect(0, 0, 562, HEIGHT, NAVY)
-    slide.rect(0, 0, 7, HEIGHT, ACCENT)
+    slide.rect(0, 0, 562, slide.height, NAVY)
+    slide.rect(0, 0, 7, slide.height, ACCENT)
     put(slide, page.get("eyebrow", "章の概要"), 44, 93, 478, 34, 13, color="A5E2D8", bold=True)
     put(slide, page["title"], 44, 140, 475, 137, 36, color=WHITE, bold=True, minimum=29)
     if page.get("intro"):
@@ -237,26 +248,26 @@ def section(slide, page, _root):
 # ========================================
 # 要約。lead の折り返しに合わせて結論欄を高くし、その直下に根拠や補足を並べる。
 def summary(slide, page, _root):
-    top = body_top(page)
+    top = body_top(page, slide.page_size, slide.heading_size)
     lead = page["lead"]
     lead_h = max(55, ceil(text_height(lead, CONTENT - 37, 17, True)) + 24)
     slide.rect(LEFT, top + 5, CONTENT, lead_h, PALE)
     slide.rect(LEFT, top + 5, 3, lead_h, ACCENT)
     put(slide, lead, LEFT + 17, top + 12, CONTENT - 37, lead_h - 14, 17,
         color=NAVY, bold=True, center=True)
-    row_pairs(slide, page["items"], LEFT, top + lead_h + 23, CONTENT, BOTTOM,
+    row_pairs(slide, page["items"], LEFT, top + lead_h + 23, CONTENT, body_bottom(slide.page_size),
               label_w=171, balanced=True)
 
 
 # 背景と論点。左列を広く取り、context と questions を別々の段落として並べる。
 def background(slide, page, _root):
-    top = body_top(page)
+    top = body_top(page, slide.page_size, slide.heading_size)
     left_w = 524
     right_x = LEFT + left_w + 30
     heading(slide, "背景と目的", LEFT, top + 8, left_w)
     heading(slide, "この資料で扱う論点", right_x, top + 8, RIGHT - right_x)
-    prose(slide, page["context"], LEFT, top + 49, left_w - 8, BOTTOM)
-    prose(slide, page["questions"], right_x, top + 49, RIGHT - right_x, BOTTOM)
+    prose(slide, page["context"], LEFT, top + 49, left_w - 8, body_bottom(slide.page_size))
+    prose(slide, page["questions"], right_x, top + 49, RIGHT - right_x, body_bottom(slide.page_size))
 
 
 # ========================================
@@ -290,23 +301,23 @@ def table_row_height(widths, row, header=False, size=TABLE_SIZE):
 
 
 # 前置きの intro と注記の note に場所を取り、実際に表を置ける y の開始・終了位置を返す。
-def table_area(page):
-    top = body_top(page)
+def table_area(page, page_size, heading_size):
+    top = body_top(page, page_size, heading_size)
     intro = page.get("intro", "")
     note = page.get("note", "")
     start = top + 10
     if intro:
         start += ceil(text_height(intro, CONTENT, BODY)) + 16
-    bottom = BOTTOM
+    bottom = body_bottom(page_size)
     if note:
         bottom -= ceil(text_height(note, CONTENT - 29, 12)) + 29
     return start, bottom
 
 
-def table_pages(page):
+def table_pages(page, page_size=DEFAULT_PAGE_SIZE, heading_size=DEFAULT_HEADING_SIZE):
     """表の見出しと注記を確保したうえで、各行を切らずにページ分割する。"""
     widths = table_widths(page)
-    y, end = table_area(page)
+    y, end = table_area(page, page_size, heading_size)
     header = table_row_height(widths, page["headers"], True)
     # 見出し行を分割後のページでも繰り返すため、本文行に使える高さから見出し分を除く。
     capacity = end - y - header
@@ -334,12 +345,12 @@ def table_pages(page):
 
 # 比較表と詳細表で共用する表描画。詳細表を分割する処理は table_pages が先に行う。
 def render_table(slide, page, _root, *, emphasize_note=False):
-    top = body_top(page)
+    top = body_top(page, slide.page_size, slide.heading_size)
     columns = len(page["headers"])
     widths = table_widths(page)
     rows = [page["headers"], *page["rows"]]
     heights = [table_row_height(widths, values, i == 0) for i, values in enumerate(rows)]
-    y, end = table_area(page)
+    y, end = table_area(page, slide.page_size, slide.heading_size)
     # 寸法計算の丸め誤差を考慮して、領域との比較には小さな許容幅を設ける。
     if sum(heights) + y > end + 0.1:
         raise ValueError("表が収まりません。行数やセルの文章量を調整してください")
@@ -361,7 +372,7 @@ def render_table(slide, page, _root, *, emphasize_note=False):
             put(slide, page["note"], LEFT + 13, note_y + 5, CONTENT - 29, note_height - 10,
                 12, color=DARK_GREEN, center=True)
         else:
-            put(slide, page["note"], LEFT + 8, note_y, CONTENT - 17, BOTTOM - note_y, 12,
+            put(slide, page["note"], LEFT + 8, note_y, CONTENT - 17, body_bottom(slide.page_size) - note_y, 12,
                 color=MUTED)
 
 
@@ -374,15 +385,15 @@ def comparison(slide, page, root):
 # 調査・実験方法のレイアウト
 # ========================================
 def method(slide, page, _root):
-    top = body_top(page)
+    top = body_top(page, slide.page_size, slide.heading_size)
     # 左側の条件一覧と右側の検証手順は読み手が相互参照しやすいように並べる。
     left_w = 547
     right_x = LEFT + left_w + 30
     heading(slide, "測定条件", LEFT, top + 7, left_w)
     heading(slide, "実施・検証手順", right_x, top + 7, RIGHT - right_x)
-    row_pairs(slide, page["conditions"], LEFT, top + 46, left_w, BOTTOM,
+    row_pairs(slide, page["conditions"], LEFT, top + 46, left_w, body_bottom(slide.page_size),
               label_w=121, balanced=True)
-    prose(slide, page["steps"], right_x, top + 46, RIGHT - right_x, BOTTOM)
+    prose(slide, page["steps"], right_x, top + 46, RIGHT - right_x, body_bottom(slide.page_size))
 
 
 # 目盛りの値は有効数字 5 桁に整え、0 は「0」と表示する。
@@ -485,13 +496,13 @@ def plot(slide, config, x, y, w, h):
 
 # グラフが 1 点なら右に考察、2 点ならグラフを左右に並べて下に考察を置く。
 def chart(slide, page, _root):
-    top = body_top(page)
+    top = body_top(page, slide.page_size, slide.heading_size)
     charts = page["charts"]
     if len(charts) == 1:
-        plot(slide, charts[0], LEFT, top + 5, 562, BOTTOM - top - 16)
+        plot(slide, charts[0], LEFT, top + 5, 562, body_bottom(slide.page_size) - top - 16)
         right_x = LEFT + 582
         heading(slide, "読み取りと考察", right_x, top + 8, RIGHT - right_x)
-        prose(slide, page["notes"], right_x, top + 47, RIGHT - right_x, BOTTOM)
+        prose(slide, page["notes"], right_x, top + 47, RIGHT - right_x, body_bottom(slide.page_size))
         return
     half = (CONTENT - 28) / 2
     notes_rule_y = 396
@@ -502,7 +513,7 @@ def chart(slide, page, _root):
     # グラフが 2 点ある場合、考察の件数で残りの幅を等分し、列間に 23 の間隔を設ける。
     width = (CONTENT - 23 * (len(notes) - 1)) / len(notes)
     for i, item in enumerate(notes):
-        prose(slide, [item], LEFT + i * (width + 23), notes_rule_y + 10, width, BOTTOM)
+        prose(slide, [item], LEFT + i * (width + 23), notes_rule_y + 10, width, body_bottom(slide.page_size))
 
 
 # ========================================
@@ -536,7 +547,7 @@ def image_size(data):
 # 相対パスは root（入力 JSON の場所）を基準にする。
 # 画像を埋め込み、その上の番号と右側の説明を別要素として描く。
 def annotated_image(slide, page, root):
-    top = body_top(page)
+    top = body_top(page, slide.page_size, slide.heading_size)
     data, ext, pixel_w, pixel_h = load_image(root, page["image"])
     # 表示枠の中に元画像の縦横比で収め、余った空間を左右または上下に均等に取る。
     image_bottom = 437
@@ -559,7 +570,7 @@ def annotated_image(slide, page, root):
     heading(slide, "図の読み方", right_x, top + 9, RIGHT - right_x)
     items = [dict(heading=f"{i}　{note['heading']}", text=note["text"])
              for i, note in enumerate(notes, 1)]
-    prose(slide, items, right_x, top + 49, RIGHT - right_x, BOTTOM)
+    prose(slide, items, right_x, top + 49, RIGHT - right_x, body_bottom(slide.page_size))
 
 
 def load_image(root, image):
@@ -580,14 +591,14 @@ def load_image(root, image):
 # 事例紹介のレイアウト
 # ========================================
 def case(slide, page, _root):
-    top = body_top(page)
+    top = body_top(page, slide.page_size, slide.heading_size)
     left_w = 328
     right_x = LEFT + left_w + 29
     heading(slide, "事例の概要", LEFT, top + 8, left_w)
     heading(slide, "取組・結果・適用条件", right_x, top + 8, RIGHT - right_x)
-    row_pairs(slide, page["profile"], LEFT, top + 49, left_w, BOTTOM,
+    row_pairs(slide, page["profile"], LEFT, top + 49, left_w, body_bottom(slide.page_size),
               label_w=68, balanced=True)
-    prose(slide, page["findings"], right_x, top + 49, RIGHT - right_x, BOTTOM)
+    prose(slide, page["findings"], right_x, top + 49, RIGHT - right_x, body_bottom(slide.page_size))
 
 
 # 関係図。行・列は 0 始まり。ノードの ID を使って links の出発点と到着点を特定する。
@@ -596,13 +607,19 @@ def case(slide, page, _root):
 # 構造図のレイアウト
 # ========================================
 def structure(slide, page, _root):
-    top = body_top(page)
+    top = body_top(page, slide.page_size, slide.heading_size)
+    bottom = body_bottom(slide.page_size)
+    draw_structure(slide, page, LEFT, top, CONTENT, bottom - top)
+
+
+def draw_structure(slide, page, left, top, width, height):
+    """同じ構造図を、全幅の本文にも混在レイアウトにも配置する。"""
     columns = page["columns"]
     nodes = page["nodes"]
     row_count = max(node["row"] for node in nodes) + 1
-    gap = 30
+    gap = min(30, width / 25)
     row_gap = 22
-    w = (CONTENT - gap * (len(columns) - 1)) / len(columns)
+    w = (width - gap * (len(columns) - 1)) / len(columns)
     cells = set()
     positions = {}
     for node in nodes:
@@ -631,13 +648,18 @@ def structure(slide, page, _root):
         edges.append(((start, sides[0]), (end, sides[1]), abs(c1 - c2)))
 
     long_count = sum(distance > 1 for _, _, distance in edges)
-    available_bottom = BOTTOM - (27 if page.get("note") else 0)
-    first_y = top + 52
+    note = page.get("note", "")
+    note_height = ceil(text_height(note, width, 11.5)) + 4 if note else 0
+    available_bottom = top + height - (note_height + 4 if note else 0)
+    heading_height = ceil(max(text_height(label, w, 15, True) for label in columns)) + 4
+    first_y = top + heading_height + 20
     route_gap = min(7, 54 / long_count) if long_count else 0
     lanes = 10 + route_gap * long_count if long_count else 0
     row_height = min(88, (available_bottom - first_y - lanes - row_gap * (row_count - 1)) / row_count)
+    if row_height < 32:
+        raise ValueError("構造図の高さが足りません。height を増やしてください")
     last_y = first_y + row_count * row_height + (row_count - 1) * row_gap
-    places = {key: (LEFT + (w + gap) * col, first_y + (row_height + row_gap) * row)
+    places = {key: (left + (w + gap) * col, first_y + (row_height + row_gap) * row)
               for key, (col, row) in positions.items()}
 
     # 複数の矢印が同じ辺に出入りする場合、辺の中央付近に等間隔の接続点を配る。
@@ -654,7 +676,9 @@ def structure(slide, page, _root):
         return (x + fraction * w, y if side == "top" else y + row_height)
 
     for i, label in enumerate(columns):
-        heading(slide, label, LEFT + (w + gap) * i, top + 8, w)
+        x = left + (w + gap) * i
+        put(slide, label, x, top + 5, w, heading_height, 15, bold=True, color=DARK_GREEN)
+        rule(slide, top + heading_height + 7, x, x + w, weight=0.8)
     long_index = 0
     for start, end, distance in edges:
         x1, y1 = port_position(start)
@@ -683,8 +707,8 @@ def structure(slide, page, _root):
         slide.rect(x, y, w, row_height, PALE, RULE)
         put(slide, node["label"], x + 10, y + 4, w - 20, row_height - 8, 14,
             color=NAVY, bold=True, minimum=12, align="ctr", center=True)
-    if page.get("note"):
-        put(slide, page["note"], LEFT, BOTTOM - 23, CONTENT, 23, 11.5, color=MUTED)
+    if note:
+        put(slide, note, left, top + height - note_height, width, note_height, 11.5, color=MUTED)
 
 
 # 工程表。左は作業名と担当、右は残りの幅を期間数で等分して作る。
@@ -693,7 +717,7 @@ def structure(slide, page, _root):
 # ロードマップのレイアウト
 # ========================================
 def roadmap(slide, page, _root):
-    top = body_top(page)
+    top = body_top(page, slide.page_size, slide.heading_size)
     periods = page["periods"]
     tasks = page["tasks"]
     left_w = 208
@@ -728,7 +752,7 @@ def roadmap(slide, page, _root):
             color=WHITE, minimum=10, center=True)
     rule(slide, y + len(tasks) * row_h)
     if page.get("note"):
-        put(slide, page["note"], LEFT, BOTTOM - 38, CONTENT, 38, 12, color=MUTED)
+        put(slide, page["note"], LEFT, body_bottom(slide.page_size) - 38, CONTENT, 38, 12, color=MUTED)
 
 
 # 左列に課題と影響を上下に重ね、中央に対応策、右に担当を示す。
@@ -737,7 +761,7 @@ def roadmap(slide, page, _root):
 # 課題と対応策のレイアウト
 # ========================================
 def issues(slide, page, _root):
-    top = body_top(page)
+    top = body_top(page, slide.page_size, slide.heading_size)
     columns = [(LEFT + 11, 308), (LEFT + 351, 391), (RIGHT - 104, 93)]
     y = top + 9
     if page.get("intro"):
@@ -748,7 +772,7 @@ def issues(slide, page, _root):
     for (x, w), label in zip(columns, ("課題・影響", "対応策", "担当"), strict=True):
         put(slide, label, x, y + 3, w, 22, 13, bold=True, color=WHITE, center=True)
     y += 29
-    bottom = BOTTOM
+    bottom = body_bottom(slide.page_size)
     if page.get("note"):
         bottom -= ceil(text_height(page["note"], CONTENT - 15, 12)) + 23
     rows = page["items"]
@@ -782,7 +806,7 @@ def issues(slide, page, _root):
         y += h
         rule(slide, y)
     if page.get("note"):
-        put(slide, page["note"], LEFT + 7, y + 12, CONTENT - 15, BOTTOM - y - 12, 12, color=MUTED)
+        put(slide, page["note"], LEFT + 7, y + 12, CONTENT - 15, body_bottom(slide.page_size) - y - 12, 12, color=MUTED)
 
 
 # ========================================
@@ -806,15 +830,31 @@ def mixed_block(slide, block, root, width, size, label):
 
         return title_h + h, draw_text
     if kind == "equation":
-        formula = parse_equation(block["latex"])
-        math_size = equation_size(formula, width - 24)
-        h = ceil(formula.height * math_size * 1.22) + 12
+        if ("latex" in block) == ("lines" in block):
+            raise ValueError("latex か lines のどちらか一方を指定してください")
+        formulas = [parse_equation(line) for line in (block.get("lines") or [block["latex"]])]
+        math_width = width - 24
+        desired = 19 / slide.x_scale
+        minimum = 12 / slide.x_scale
+        math_size = min(equation_size(formula, math_width, desired, minimum) for formula in formulas)
+        heights = [ceil(formula.height * math_size * 1.22) + 8 for formula in formulas]
+        height = sum(heights) + 4
 
         def draw_equation(x, y):
-            slide.rect(x, y, width, h, PALE)
-            slide.equation(formula, x + 12, y + 2, width - 24, h - 4, math_size, NAVY, label)
+            slide.rect(x, y, width, height, PALE)
+            cursor = y + 2
+            align = "l" if len(formulas) > 1 else "ctr"
+            for formula, line_height in zip(formulas, heights, strict=True):
+                slide.equation(formula, x + 12, cursor, math_width, line_height, math_size, NAVY,
+                               label, desired=desired, align=align)
+                cursor += line_height
 
-        return h, draw_equation
+        return height, draw_equation
+    if kind == "structure":
+        height = block.get("height", 285)
+        return height, lambda x, y: draw_structure(slide, block, x, y, width, height)
+    if kind == "code":
+        return mixed_code(slide, block, width, size, label)
     if kind == "table":
         widths = table_widths(block, width)
         rows = [block["headers"], *block["rows"]]
@@ -837,13 +877,41 @@ def mixed_block(slide, block, root, width, size, label):
     return ih, draw_image
 
 
+def mixed_code(slide, block, width, size, label):
+    lines = block["code"].expandtabs(4).split("\n")
+    code_size = min(size, 12.5 / slide.x_scale)
+    padding = 12
+    inner_width = width - 2 * padding
+    # コンソラスは欧文が等幅、日本語は本文フォントにフォールバックする。
+    longest = max(sum(1 if ord(char) > 127 else 0.65 for char in line) for line in lines)
+    if longest * code_size > inner_width:
+        raise ValueError("コード行が長すぎます。コードを分割するか、列を広げてください")
+    title = block.get("heading")
+    title_height = ceil(text_height(title, width, size + 2, True)) + 4 if title else 0
+    code_height = ceil(1.32 * code_size * len(lines)) + 3
+    height = title_height + 2 * padding + code_height
+
+    def draw_code(x, y):
+        if title:
+            put(slide, title, x, y, width, title_height, size + 2, color=DARK_GREEN, bold=True)
+        y += title_height
+        slide.rect(x, y, width, code_height + 2 * padding, PAPER, RULE)
+        slide.code(lines, x + padding, y + padding, inner_width, code_height, code_size, INK, label)
+
+    return height, draw_code
+
+
 def mixed(slide, page, root):
     """行ごとに全幅または2列を選び、背の高い列の直下に次の行を置く。"""
     gap = 10
     column_gap = 24
-    top = body_top(page) + 5
-    # 図表を含めた全体の高さを先に測る。本文・表を 12 / 11 / 10 pt の順に試す。
-    for size in (BODY, BODY - 1, BODY - 2):
+    top = body_top(page, slide.page_size, slide.heading_size) + 5
+    # A4 は縦に増えた本文領域を生かす。下限まで1 ptずつ試してから改稿を求める。
+    standard = A4_BODY_PT if slide.page_size == "a4" else BODY
+    desired = page.get("body_size", standard)
+    minimum = min(desired, A4_MIN_BODY_PT if slide.page_size == "a4" else BODY - 2)
+    for points in range(desired, minimum - 1, -1):
+        size = points / slide.x_scale
         y = top
         placements = []
         for number, row in enumerate(page["rows"], 1):
@@ -870,13 +938,13 @@ def mixed(slide, page, root):
                     cursor += height + gap
                 ends.append(cursor)
             y = max(ends) + 4
-        if y - gap - 4 <= BOTTOM:
+        if y - gap - 4 <= body_bottom(slide.page_size):
             break
     else:
         raise ValueError("本文が1ページに収まりません。段の構成、文章量または図表の高さを調整してください")
 
-    if size < BODY:
-        slide.warnings.append(f"混在レイアウトの本文を {size * slide.x_scale:.1f} pt に縮小しました")
+    if points < desired:
+        slide.warnings.append(f"混在レイアウトの本文を {points:g} pt に縮小しました")
     for x, y, draw, label in placements:
         try:
             draw(x, y)

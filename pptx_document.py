@@ -26,6 +26,20 @@ PAGE_SIZES = {
     "16:9": (WIDTH, HEIGHT, "screen16x9"),
 }
 
+DEFAULT_HEADING_SIZE = 22
+MIN_HEADING_SIZE = 20
+MAX_HEADING_SIZE = 24
+
+
+def canvas_scale(page_size):
+    return PAGE_SIZES[page_size][0] / WIDTH
+
+
+def canvas_height(page_size):
+    """横幅を基準に縦横等倍で描くため、用紙の高さをレイアウト座標に戻す。"""
+    return PAGE_SIZES[page_size][1] / canvas_scale(page_size)
+
+
 # ========================================
 # フォントの指定
 # ========================================
@@ -96,15 +110,16 @@ def outline(color=None, width=0.75, arrow=False):
 # 文字の書式・幅・高さとXMLの生成
 # ========================================
 # 欧文、東アジア文字、複合文字用の各スロットに同じ書体名を指定する。
-def fonts(font):
+def fonts(font, latin_font=None):
     face = FONT_FAMILIES[font]
-    return f'<a:latin typeface="{face}"/><a:ea typeface="{face}"/><a:cs typeface="{face}"/>'
+    latin = latin_font or face
+    return f'<a:latin typeface="{latin}"/><a:ea typeface="{face}"/><a:cs typeface="{latin}"/>'
 
 
 # 文字列の一部分（ラン）のサイズ、色、太字、フォントを指定する。OOXML のサイズは 1/100 pt 単位。
-def font_properties(size, color, bold, font):
+def font_properties(size, color, bold, font, latin_font=None):
     return (f'<a:rPr lang="ja-JP" sz="{round(size * 100)}" b="{int(bold)}">'
-            f'{fill(color)}{fonts(font)}</a:rPr>')
+            f'{fill(color)}{fonts(font, latin_font)}</a:rPr>')
 
 
 def display_width(value):
@@ -132,9 +147,9 @@ def cell_text(value):
 
 # 1 行を 1 段落にする。align は l（左）・ctr（中央）・r（右）で、行間は指定値の 116%。
 # escape() で本文中の & や < を XML 用に処理し、xml:space で空白を保持する。
-def paragraph(value, size, color, bold, align, font):
+def paragraph(value, size, color, bold, align, font, latin_font=None):
     return (f'<a:p><a:pPr algn="{align}"><a:lnSpc><a:spcPct val="116000"/>'
-            f'</a:lnSpc></a:pPr><a:r>{font_properties(size, color, bold, font)}'
+            f'</a:lnSpc></a:pPr><a:r>{font_properties(size, color, bold, font, latin_font)}'
             f'<a:t xml:space="preserve">{escape(value)}</a:t></a:r>'
             f'<a:endParaRPr lang="ja-JP" sz="{round(size * 100)}"/></a:p>')
 
@@ -169,13 +184,13 @@ def text_body(tag, value, w, h, size, color, bold, align, anchor, minimum=None, 
 # 1 枚のスライドを組み立てる。図形や表の XML を追加順に保持し、後から追加した要素が手前に描画される。
 class Slide:
     # スライド名、要素の格納先、スライド内で一意な図形 ID の採番を初期化する。
-    def __init__(self, name, page_size=DEFAULT_PAGE_SIZE, *, font=DEFAULT_FONT):
+    def __init__(self, name, page_size=DEFAULT_PAGE_SIZE, *, font=DEFAULT_FONT, heading_size=DEFAULT_HEADING_SIZE):
         self.name = name
         self.page_size = page_size
         self.font = font
-        paper_width, paper_height, _ = PAGE_SIZES[page_size]
-        self.x_scale = paper_width / WIDTH
-        self.y_scale = paper_height / HEIGHT
+        self.heading_size = heading_size
+        self.height = canvas_height(page_size)
+        self.x_scale = self.y_scale = canvas_scale(page_size)
         self.parts = []
         self.ids = count(2)
         self.pictures = []
@@ -229,7 +244,7 @@ class Slide:
 
     def check_bounds(self, name, x, y, w, h):
         if (not all(isfinite(value) for value in (x, y, w, h))
-                or min(x, y, w, h) < 0 or x + w > WIDTH + 0.01 or y + h > HEIGHT + 0.01):
+                or min(x, y, w, h) < 0 or x + w > WIDTH + 0.01 or y + h > self.height + 0.01):
             raise ValueError(f"スライドの外に配置されています（{name}）")
 
     def fit_picture(self, pixel_width, pixel_height, frame_width, frame_height):
@@ -292,18 +307,28 @@ class Slide:
                                  f"{size * self.x_scale:.1f} → {fitted * self.x_scale:.1f} pt に縮小しました")
         self.inspect_text(label, value, x, y, w, h, fitted, bold, align, anchor)
 
-    def equation(self, formula, x, y, w, h, size, color, label):
+    def code(self, lines, x, y, w, h, size, color, label):
+        """コードは等幅で描き、自動折り返しを無効にする。"""
+        body = ('<p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" anchor="t">'
+                '<a:noAutofit/></a:bodyPr><a:lstStyle/>' +
+                ''.join(paragraph(line, size * self.x_scale, color, False, "l", self.font, "Consolas")
+                        for line in lines) + '</p:txBody>')
+        self._shape(label, x, y, w, h, "rect", None, outline(), body)
+        self.track_region(label, x, y, w, h)
+
+    def equation(self, formula, x, y, w, h, size, color, label, *, desired=19, align="ctr"):
         """ネイティブ数式を使えない閲覧ソフト向けに、同じ位置に代替テキストを入れる。"""
         fallback = text_body("p:txBody", formula.plain, w, h, min(12, size), color,
-                             False, "ctr", "middle", 8, scale=self.x_scale, font=self.font)
+                             False, align, "middle", 8, scale=self.x_scale, font=self.font)
         math_font = round(size * self.x_scale * 100)
         style = (f'<a:rPr lang="en-US" sz="{math_font}">{fill(color)}'
                  '<a:latin typeface="Cambria Math"/><a:ea typeface="Cambria Math"/></a:rPr>')
         # m:rPr（数学用の書式）と m:t（文字）の間に DrawingML の書体を配置する。
         native = formula.xml.replace("<m:t ", f"{style}<m:t ")
+        justification = "left" if align == "l" else "center"
         body = ('<p:txBody><a:bodyPr wrap="none" lIns="0" tIns="0" rIns="0" bIns="0" anchor="ctr">'
-                '<a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="ctr"/>'
-                f'<a14:m xmlns:m="{M}"><m:oMathPara><m:oMathParaPr><m:jc m:val="center"/>'
+                f'<a:noAutofit/></a:bodyPr><a:lstStyle/><a:p><a:pPr algn="{align}"/>'
+                f'<a14:m xmlns:m="{M}"><m:oMathPara><m:oMathParaPr><m:jc m:val="{justification}"/>'
                 f'</m:oMathParaPr><m:oMath>{native}</m:oMath></m:oMathPara></a14:m>'
                 f'<a:endParaRPr lang="en-US" sz="{math_font}"/></a:p></p:txBody>')
         self._shape(label, x, y, w, h, "rect", None, outline(), fallback)
@@ -313,7 +338,7 @@ class Slide:
                           f'<mc:Choice xmlns:a14="{A14}" Requires="a14">{native_shape}</mc:Choice>'
                           f'<mc:Fallback>{fallback_shape}</mc:Fallback></mc:AlternateContent>')
         self.track_region(label, x, y, w, h)
-        if size < 19:
+        if size < desired - 0.05:
             self.warnings.append(f"「{label}」の数式を {math_font / 100:.1f} pt に縮小しました")
 
     def picture(self, data, extension, x, y, w, h, alternative):

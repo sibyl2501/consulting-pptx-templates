@@ -14,7 +14,7 @@ python3 build_slides.py --check examples.json
 python3 build_slides.py examples.json output.pptx
 ~~~
 
-従来の横長16:9にする場合は、`python3 build_slides.py --page-size 16:9 examples.json output.pptx` と指定します。
+既定はA4横（297 × 210 mm）です。縦方向の余裕を、本文・表・図の配置に使います。横長16:9にする場合は `python3 build_slides.py --page-size 16:9 examples.json output.pptx` と指定します。通常ページの見出しは実寸22 ptです。`--heading-size 24` のように20〜24 ptで設定でき、長い見出しは20 ptまで調整します。
 
 既定の書体はヒラギノ角ゴシック（Hiragino Sans）です。表示環境にない場合などに游ゴシックへ切り替えるには、 `python3 build_slides.py --font yu-gothic examples.json output.pptx` と指定します。
 
@@ -57,7 +57,7 @@ AIにこのリポジトリのURL、資料の目的・読み手、元資料を渡
 - **表**には `headers` と `rows` を指定します。`widths` に列幅の比率、`aligns` に左右・中央揃え、`highlight` に強調列の番号を指定できます。`data_table` では、行を分割せずに見出し付きの続きページを作ります。
 - **図の注釈**は PNG と JPEG に対応します。`x` と `y` は画像の左上を0、右下を1とする比率です。`alt` は画像の代替テキストとして保存されます。
 - **構造図**の `col` と `row`、ロードマップの `start` と `end`、強調列の `highlight` はすべて0始まりです。`links` に同じ `from` を持つ複数の接続を書けば分岐になり、同じ `to` なら合流になります。離れた列間の矢印は下の余白を通ります。同じ列で離れた行同士もつなげます。接続が多い図では、線の交差をPowerPointでも確認してください。
-- **文字の収まり**は文字幅と行数を概算して検査します。短い最終行、文字サイズの縮小、文字・表・数式などの重なりの可能性は、検査時と生成時にページ番号と要素名を付けて表示します。基準サイズ（16:9）の本文は標準12 ptで、A4横ではページの横幅に合わせて換算します。フォントや禁則処理によって実際の折り返しが変わるため、最終表示はPowerPointで確認してください。
+- **文字の収まり**は文字幅と行数を概算して検査します。短い最終行、文字サイズの縮小、文字・表・数式などの重なりの可能性は、検査時と生成時にページ番号と要素名を付けて表示します。混在レイアウトの本文はA4横では標準13 pt、16:9では標準12 ptです。ページごとに `body_size`（11〜16 pt）も指定できます。フォントや禁則処理によって実際の折り返しが変わるため、最終表示はPowerPointで確認してください。
 
 ### 文章・図表・数式を1ページに配置する
 
@@ -66,12 +66,14 @@ AIにこのリポジトリのURL、資料の目的・読み手、元資料を渡
 | 要素の `type` | 主な設定 |
 | --- | --- |
 | `text` | `text` に本文、任意で `heading` に小見出し |
-| `equation` | `latex` に数式 |
+| `equation` | 1行なら `latex`、複数行なら `lines` に式の配列。各行は編集可能 |
 | `table` | `headers` と `rows`、任意で列幅比の `widths` |
 | `chart` | `chart` に棒・折れ線の設定、任意で `height` |
 | `image` | `image` に相対パス、`alt` に画像の説明、任意で高さの上限 `height` |
+| `structure` | `columns`・`nodes`・`links` を構造図と同じ形式で指定。任意で `height` と `note` |
+| `code` | `code` に改行・インデント込みのコード、任意で `heading`。欧文は等幅、長い行は入力検査で指摘 |
 
-数式はPowerPoint上で編集できます。対応する記法には `x_i^2`、`\frac{a}{b}`、`\sum_{i=1}^{n} x_i`、`\begin{bmatrix}a&b\\c&d\end{bmatrix}`、`\alpha`、`\partial` などがあります。対応外の命令は入力エラーになります。JSONに書くときはバックスラッシュを重ねます。
+数式はPowerPoint上で編集できます。対応する記法には `x_i^2`、`\frac{a}{b}`、`\sum_{i=1}^{n} x_i`、`\begin{bmatrix}a&b\\c&d\end{bmatrix}`、`\alpha`、`\partial` などがあります。平方根は `\sqrt{x}` と書けます。長い式は全幅の段に移すか、`lines` で分けると読みやすくなります。対応外の命令は入力エラーになります。JSONに書くときはバックスラッシュを重ねます。
 
 ~~~json
 {
@@ -90,6 +92,8 @@ AIにこのリポジトリのURL、資料の目的・読み手、元資料を渡
   ]
 }
 ~~~
+
+表紙と章扉は独自の文字サイズを使います。見出しのサイズ指定は共通見出しを使う通常ページに適用されます。
 
 ## コードを変更する場所
 

@@ -14,7 +14,10 @@ import sys
 # このファイルは入力を検査し、layouts.py にページ別の描画を依頼する。
 # pptx_document.py は図形や表をまとめて PPTX に書き出す。
 from layouts import ACCENT, NAVY, RENDERERS, footer, standard_slide, table_pages
-from pptx_document import DEFAULT_FONT, DEFAULT_PAGE_SIZE, FONT_FAMILIES, PAGE_SIZES, Slide, write_pptx
+from pptx_document import (
+    DEFAULT_FONT, DEFAULT_HEADING_SIZE, DEFAULT_PAGE_SIZE, FONT_FAMILIES, MAX_HEADING_SIZE,
+    MIN_HEADING_SIZE, PAGE_SIZES, Slide, write_pptx,
+)
 
 
 # ========================================
@@ -154,9 +157,12 @@ def validate_document(document, schema):
 # ========================================
 # スライドの生成
 # ========================================
-def render(document, asset_root, schema=None, *, page_size=DEFAULT_PAGE_SIZE, font=DEFAULT_FONT):
+def render(document, asset_root, schema=None, *, page_size=DEFAULT_PAGE_SIZE, font=DEFAULT_FONT,
+           heading_size=DEFAULT_HEADING_SIZE):
     """書き出しと入力検査で同じ配置を実行する。"""
     # 通常は同梱の入力仕様を読み込む。呼び出し元から仕様を渡すこともできる。
+    if not MIN_HEADING_SIZE <= heading_size <= MAX_HEADING_SIZE:
+        raise ValueError("見出しは20〜24 ptにしてください")
     schema = read_schema() if schema is None else schema
     validate_document(document, schema)
     slides = []
@@ -165,16 +171,16 @@ def render(document, asset_root, schema=None, *, page_size=DEFAULT_PAGE_SIZE, fo
         try:
             # 詳細表の入力 1 件が複数枚に展開することがある。
             # i は元の入力番号、number は分割後の PowerPoint の通し番号。
-            records = table_pages(page) if kind == "data_table" else [page]
+            records = table_pages(page, page_size, heading_size) if kind == "data_table" else [page]
             for part in records:
                 number = len(slides) + 1
                 # 表紙と章扉は独自の構成。章扉にフッターを付け、本文には共通見出しとフッターを付ける。
                 if kind in ("cover", "section"):
-                    slide = Slide(f"{number:02d} {part['title']}", page_size, font=font)
+                    slide = Slide(f"{number:02d} {part['title']}", page_size, font=font, heading_size=heading_size)
                     if kind == "section":
                         footer(slide, part, number)
                 else:
-                    slide = standard_slide(part, document, number, page_size, font=font)
+                    slide = standard_slide(part, document, number, page_size, font=font, heading_size=heading_size)
                 # 型名に対応する関数を呼び、作成済みの Slide に本文を加える。
                 # asset_root は画像を使う型で、相対パスの起点になる。
                 RENDERERS[kind](slide, part, asset_root)
@@ -198,6 +204,8 @@ def main(argv=None):
                         help="スライドの大きさ（既定: A4 横）")
     parser.add_argument("--font", choices=FONT_FAMILIES, default=DEFAULT_FONT,
                         help="書体（既定: ヒラギノ角ゴシック、代替: yu-gothic）")
+    parser.add_argument("--heading-size", type=float, default=DEFAULT_HEADING_SIZE,
+                        metavar="PT", help="通常ページの見出し（20〜24 pt、既定: 22）")
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--check", action="store_true", help="入力と配置を検査する")
     mode.add_argument("--catalog", action="store_true", help="レイアウトの名称と用途を表示する")
@@ -219,7 +227,8 @@ def main(argv=None):
         # utf-8-sig は BOM（ファイル先頭の目印）付き・なしの両方に対応する。
         # 画像の相対パスは実行場所にかかわらず、入力 JSON の親ディレクトリを基準にする。
         document = json.loads(args.input.read_text(encoding="utf-8-sig"))
-        slides = render(document, args.input.resolve().parent, page_size=args.page_size, font=args.font)
+        slides = render(document, args.input.resolve().parent, page_size=args.page_size, font=args.font,
+                        heading_size=args.heading_size)
         for slide in slides:
             for warning in dict.fromkeys(slide.warnings):
                 print(f"警告  {slide.name} — {warning}", file=sys.stderr)
