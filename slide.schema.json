@@ -1086,12 +1086,41 @@
           "minLength": 1,
           "maxLength": 600,
           "description": "対応する LaTeX 記法。バックスラッシュは JSON でエスケープする。"
+        },
+        "lines": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 8,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 600,
+            "description": "対応する LaTeX 記法。バックスラッシュは JSON でエスケープする。"
+          },
+          "description": "複数行を一つの背景にまとめ、各行を編集可能な数式として左揃えにする。"
         }
       },
       "required": [
-        "type",
-        "latex"
-      ]
+        "type"
+      ],
+      "anyOf": [
+        {
+          "required": [
+            "latex"
+          ]
+        },
+        {
+          "required": [
+            "lines"
+          ]
+        }
+      ],
+      "not": {
+        "required": [
+          "latex",
+          "lines"
+        ]
+      }
     },
     "block_table": {
       "type": "object",
@@ -1202,6 +1231,12 @@
         },
         {
           "$ref": "#/$defs/block_image"
+        },
+        {
+          "$ref": "#/$defs/block_structure"
+        },
+        {
+          "$ref": "#/$defs/block_code"
         }
       ]
     },
@@ -1240,7 +1275,7 @@
     },
     "layout_mixed": {
       "title": "本文・図表・数式の混在",
-      "description": "全幅と2列を段ごとに組み合わせ、本文・図表・数式を上から順に詰める。",
+      "description": "全幅と2列を段ごとに組み合わせ、本文・表・図・数式・コードを上から順に詰める。",
       "type": "object",
       "additionalProperties": false,
       "properties": {
@@ -1269,12 +1304,133 @@
           },
           "minItems": 1,
           "maxItems": 6
+        },
+        "body_size": {
+          "type": "integer",
+          "minimum": 11,
+          "maximum": 16,
+          "description": "本文の希望ポイント数。既定はA4横13 pt、16:9は12 pt。"
         }
       },
       "required": [
         "layout",
         "title",
         "rows"
+      ]
+    },
+    "block_structure": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "structure"
+        },
+        "columns": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 2,
+          "maxItems": 4
+        },
+        "nodes": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "col": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 3
+              },
+              "row": {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 2
+              },
+              "label": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "col",
+              "row",
+              "label"
+            ]
+          },
+          "minItems": 2,
+          "maxItems": 12
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "from": {
+                "type": "string",
+                "minLength": 1
+              },
+              "to": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "from",
+              "to"
+            ]
+          },
+          "minItems": 1,
+          "maxItems": 20
+        },
+        "note": {
+          "type": "string",
+          "minLength": 1
+        },
+        "height": {
+          "type": "number",
+          "minimum": 150,
+          "maximum": 450,
+          "description": "レイアウト座標で指定する高さ。既定は285。"
+        }
+      },
+      "required": [
+        "type",
+        "columns",
+        "nodes",
+        "links"
+      ]
+    },
+    "block_code": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "type": {
+          "const": "code"
+        },
+        "heading": {
+          "type": "string",
+          "minLength": 1
+        },
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4000,
+          "description": "改行とインデントを含むコード本文。タブは4桁幅。"
+        }
+      },
+      "required": [
+        "type",
+        "code"
       ]
     }
   }

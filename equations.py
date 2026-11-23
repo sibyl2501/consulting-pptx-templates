@@ -55,6 +55,14 @@ def fraction(num, den):
     )
 
 
+def square_root(radicand):
+    return Formula(
+        '<m:rad><m:radPr><m:degHide m:val="1"/></m:radPr><m:deg/>'
+        f'<m:e>{radicand.xml}</m:e></m:rad>',
+        f'√({radicand.plain})', radicand.width + 1.05, radicand.height + 0.30,
+    )
+
+
 def matrix(rows, left, right):
     columns = len(rows[0])
     if any(len(row) != columns for row in rows):
@@ -178,6 +186,8 @@ class Parser:
             return self.expression_group_body(depth)
         if token == r"\frac":
             return fraction(self.group(depth), self.group(depth))
+        if token == r"\sqrt":
+            return square_root(self.group(depth))
         if token == r"\begin":
             return self.read_matrix(depth)
         if token == r"\sum":
@@ -201,10 +211,9 @@ def parse_equation(source):
     return Parser(source).expression(set())
 
 
-def equation_size(formula, width):
+def equation_size(formula, width, desired=19, minimum=12):
     # 行列や分数は折り返せない。下限を下回る長い式は位置付きのエラーにする。
-    desired = 19
     size = min(desired, width / (1.22 * formula.width)) if formula.width else desired
-    if size < 12 and not isclose(size, 12):
-        raise ValueError("数式が幅に収まりません。全幅に移すか、式を分けてください")
+    if size < minimum and not isclose(size, minimum):
+        raise ValueError("数式が幅に収まりません。全幅に移すか、lines で式を分けてください")
     return round(size, 1)
